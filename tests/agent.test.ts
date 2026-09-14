@@ -499,6 +499,206 @@ describe('PayFiAgent — mainnet spending cap', () => {
   });
 });
 
+// Audit finding S-1: assertWithinSpendingLimit (and thus MAINNET_SPENDING_CAP)
+// was previously enforced for only stellar_payment/x402_respond, leaving every
+// other value-moving task type free to move unbounded amounts on mainnet.
+// These tests pin the fix — each task type below must reject an amount above
+// MAINNET_SPENDING_CAP (10_000, mocked above) before ever reaching its tool.
+describe('PayFiAgent — spending-limit enforcement across all money-moving task types (audit S-1)', () => {
+  let agent: PayFiAgent;
+
+  beforeEach(() => {
+    spendingTracker.clear();
+    // vitest.config.ts sets restoreMocks: true, which resets every vi.fn()
+    // (including the mockImplementation set inside each vi.mock() factory)
+    // after every test — so any tool actually reached (i.e. not blocked by
+    // the spending guard) needs its mock re-applied here, same as the
+    // "task dispatch matrix" describe block below.
+    vi.mocked(MultiSigPaymentTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_multisig_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(BatchPaymentTool).mockImplementation(
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({ txHash: 's1_batch_hash', ledger: 1, skipped: 0 }),
+        }) as any
+    );
+    vi.mocked(PathPaymentTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_path_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(DexOfferTool).mockImplementation(
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({ txHash: 's1_dex_hash', ledger: 1, offerId: '42' }),
+        }) as any
+    );
+    vi.mocked(LiquidityPoolTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_lp_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(SponsoredAccountTool).mockImplementation(
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({
+            txHash: 's1_sponsored_hash',
+            ledger: 1,
+            newAccountPublicKey: DEST,
+            startingBalance: '5',
+          }),
+        }) as any
+    );
+    agent = new PayFiAgent();
+  });
+
+  it('rejects a multisig_payment above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'multisig_payment',
+      payload: { destination: DEST, amount: '12000', additionalSigners: [], minSignatures: 1 },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a batch_payment whose aggregate exceeds MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'batch_payment',
+      payload: {
+        payments: [
+          { destination: DEST, amount: '6000', assetCode: 'USDC', assetIssuer: ISSUER },
+          { destination: DEST, amount: '6000', assetCode: 'USDC', assetIssuer: ISSUER },
+        ],
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a path_payment (sendAmount) above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'path_payment',
+      payload: {
+        destination: DEST,
+        sendAsset: { code: 'XLM' },
+        sendAmount: '11000',
+        destAsset: { code: 'USDC', issuer: ISSUER },
+        destMinAmount: '1',
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a swap (sellAmount) above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'swap',
+      payload: {
+        sellAsset: { code: 'XLM' },
+        buyAsset: { code: 'USDC', issuer: ISSUER },
+        sellAmount: '11000',
+        maxSlippagePct: 1,
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a dex_offer create above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'dex_offer',
+      payload: {
+        action: 'create',
+        selling: { code: 'XLM' },
+        buying: { code: 'USDC', issuer: ISSUER },
+        amount: '11000',
+        price: '1',
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('does not apply the cap to a dex_offer delete (amount is forced to 0 on-chain)', async () => {
+    const result = await agent.run({
+      type: 'dex_offer',
+      payload: {
+        action: 'delete',
+        selling: { code: 'XLM' },
+        buying: { code: 'USDC', issuer: ISSUER },
+        amount: '11000',
+        price: '1',
+        offerId: '42',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a liquidity_pool deposit above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'liquidity_pool',
+      payload: {
+        action: 'deposit',
+        liquidityPoolId: 'pool-1',
+        maxAmountA: '11000',
+        maxAmountB: '100',
+        minPrice: '0.1',
+        maxPrice: '10',
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('does not apply the cap to a liquidity_pool withdraw (funds return to the agent)', async () => {
+    const result = await agent.run({
+      type: 'liquidity_pool',
+      payload: {
+        action: 'withdraw',
+        liquidityPoolId: 'pool-1',
+        amount: '11000',
+        minAmountA: '1',
+        minAmountB: '1',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a sponsored_account startingBalance above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'sponsored_account',
+      payload: { newAccountPublicKey: DEST, startingBalance: '11000' },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('accepts each task type at an amount within the cap', async () => {
+    const cases: Array<{ type: TaskType; payload: unknown }> = [
+      {
+        type: 'multisig_payment',
+        payload: { destination: DEST, amount: '100', additionalSigners: [], minSignatures: 1 },
+      },
+      {
+        type: 'path_payment',
+        payload: {
+          destination: DEST,
+          sendAsset: { code: 'XLM' },
+          sendAmount: '100',
+          destAsset: { code: 'USDC', issuer: ISSUER },
+          destMinAmount: '1',
+        },
+      },
+      {
+        type: 'sponsored_account',
+        payload: { newAccountPublicKey: DEST, startingBalance: '5' },
+      },
+    ];
+
+    for (const { type, payload } of cases) {
+      const result = await agent.run({ type, payload });
+      expect(result.success).toBe(true);
+    }
+  });
+});
+
 describe('AgentResult snapshot', () => {
   let agent: PayFiAgent;
 

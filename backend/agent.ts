@@ -620,13 +620,27 @@ export class PayFiAgent extends EventEmitter {
             data = await this.trustlineTool.execute(task.payload);
             break;
 
-          case 'multisig_payment':
+          case 'multisig_payment': {
+            const p = task.payload as Record<string, unknown>;
+            assertWithinSpendingLimit(p?.amount);
             data = await this.multiSigTool.execute(task.payload);
             break;
+          }
 
-          case 'batch_payment':
+          case 'batch_payment': {
+            const p = task.payload as Record<string, unknown>;
+            const payments = Array.isArray(p?.payments) ? (p.payments as unknown[]) : [];
+            const total = payments.reduce((sum: number, payment) => {
+              const amt = parseFloat(String((payment as Record<string, unknown>)?.amount));
+              return sum + (isNaN(amt) ? 0 : amt);
+            }, 0);
+            // Batch is one atomic transaction — enforce the cap and mainnet ceiling
+            // against the aggregate, and record the aggregate against the rolling
+            // window so batching can't be used to evade it (see audit finding S-1).
+            assertWithinSpendingLimit(total > 0 ? String(total) : undefined);
             data = await this.batchPaymentTool.execute(task.payload);
             break;
+          }
 
           case 'balance_check': {
             const balanceCheckTool = this.balanceCheckTool as {
@@ -643,21 +657,35 @@ export class PayFiAgent extends EventEmitter {
             break;
           }
 
-          case 'path_payment':
+          case 'path_payment': {
+            const p = task.payload as Record<string, unknown>;
+            assertWithinSpendingLimit(p?.sendAmount);
             data = await this.pathPaymentTool.execute(task.payload);
             break;
+          }
 
           case 'fee_bump':
             data = await this.feeBumpTool.execute(task.payload);
             break;
 
-          case 'dex_offer':
+          case 'dex_offer': {
+            const p = task.payload as Record<string, unknown>;
+            // A "delete" always submits amount "0" on-chain regardless of the
+            // input amount (see DexOfferTool) and reduces exposure rather than
+            // creating it, so only create/update are checked against the cap.
+            if (p?.action !== 'delete') {
+              assertWithinSpendingLimit(p?.amount);
+            }
             data = await this.dexOfferTool.execute(task.payload);
             break;
+          }
 
-          case 'swap':
+          case 'swap': {
+            const p = task.payload as Record<string, unknown>;
+            assertWithinSpendingLimit(p?.sellAmount);
             data = await this.swapTool.execute(task.payload);
             break;
+          }
 
           case 'account_history':
             data = await this.accountHistoryTool.fetch(task.payload);
@@ -667,9 +695,17 @@ export class PayFiAgent extends EventEmitter {
             data = await this.sorobanDeployTool.execute(task.payload);
             break;
 
-          case 'liquidity_pool':
+          case 'liquidity_pool': {
+            const p = task.payload as Record<string, unknown>;
+            // Only "deposit" commits new funds into the pool; "withdraw" returns
+            // funds to the agent and "info" is read-only, so neither is checked.
+            if (p?.action === 'deposit') {
+              assertWithinSpendingLimit(p?.maxAmountA);
+              assertWithinSpendingLimit(p?.maxAmountB);
+            }
             data = await this.liquidityPoolTool.execute(task.payload);
             break;
+          }
 
           case 'stellar_toml':
             data = await this.stellarTomlTool.fetchToml(task.payload);
@@ -683,9 +719,12 @@ export class PayFiAgent extends EventEmitter {
             data = await this.sequenceNumberTool.execute(task.payload);
             break;
 
-          case 'sponsored_account':
+          case 'sponsored_account': {
+            const p = task.payload as Record<string, unknown>;
+            assertWithinSpendingLimit(p?.startingBalance);
             data = await this.sponsoredAccountTool.execute(task.payload);
             break;
+          }
 
           case 'anchor_quote':
             data = await this.anchorQuoteTool.execute(task.payload);
