@@ -85,8 +85,8 @@ export interface MockSorobanServerOverrides {
   account?: unknown;
   /** Default rejection for `loadAccount`. */
   accountError?: Error;
-  /** Default resolved value for `prepareSorobanTxWithEvents` (`{ tx, events }`). */
-  prepared?: { tx?: unknown; events?: unknown[] };
+  /** Default resolved value for `prepareSorobanTxWithEvents` (`{ tx, events, retval? }`). */
+  prepared?: { tx?: unknown; events?: unknown[]; retval?: unknown };
   /** Default rejection for `prepareSorobanTxWithEvents`. */
   simulationError?: Error;
   /** Default resolved value for `sorobanServer.sendTransaction`. */
@@ -143,7 +143,7 @@ export interface MockSorobanServer {
   /** Configure the default `loadAccount` rejection. */
   setAccountError(error: Error): MockSorobanServer;
   /** Configure the default `prepareSorobanTxWithEvents` resolution. */
-  setPrepared(prepared: { tx?: unknown; events?: unknown[] }): MockSorobanServer;
+  setPrepared(prepared: { tx?: unknown; events?: unknown[]; retval?: unknown }): MockSorobanServer;
   /** Configure the default `prepareSorobanTxWithEvents` rejection. */
   setSimulationError(error: Error): MockSorobanServer;
   /** Configure the default `sendTransaction` resolution. */
@@ -256,7 +256,11 @@ export function createMockSorobanServer(
       loadAccount.mockRejectedValue(error);
       return server;
     },
-    setPrepared(prepared: { tx?: unknown; events?: unknown[] }): MockSorobanServer {
+    setPrepared(prepared: {
+      tx?: unknown;
+      events?: unknown[];
+      retval?: unknown;
+    }): MockSorobanServer {
       prepareSorobanTxWithEvents.mockResolvedValue({
         tx: makeMockPreparedTx(),
         events: [],

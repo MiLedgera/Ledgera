@@ -469,6 +469,12 @@ export interface PreparedSorobanTx {
   tx: Transaction;
   /** Diagnostic events predicted by the simulation, in XDR form. */
   events: xdr.DiagnosticEvent[];
+  /**
+   * The host function's return value, when the invocation simulates one
+   * (e.g. `uploadContractWasm`'s wasm hash, `createCustomContract`'s new
+   * contract address). Undefined for operations with no return value.
+   */
+  retval?: xdr.ScVal | undefined;
 }
 
 export async function prepareSorobanTxWithEvents(tx: Transaction): Promise<PreparedSorobanTx> {
@@ -484,7 +490,7 @@ export async function prepareSorobanTxWithEvents(tx: Transaction): Promise<Prepa
   const builtTx = rpc.assembleTransaction(tx, simResult).build();
   validateSorobanAuth(builtTx as Transaction | { operations?: Array<{ auth?: Array<unknown> }> });
 
-  return { tx: builtTx, events: simResult.events ?? [] };
+  return { tx: builtTx, events: simResult.events ?? [], retval: simResult.result?.retval };
 }
 
 export async function prepareSorobanTx(tx: Transaction): Promise<Transaction> {
