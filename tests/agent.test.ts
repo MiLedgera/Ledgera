@@ -26,6 +26,11 @@ import { AccountInfoTool } from '../backend/tools/AccountInfoTool';
 import { TrustlineTool } from '../backend/tools/TrustlineTool';
 import { MultiSigPaymentTool } from '../backend/tools/MultiSigPaymentTool';
 import { BatchPaymentTool } from '../backend/tools/BatchPaymentTool';
+import { ClaimableBalanceTool } from '../backend/tools/ClaimableBalanceTool';
+import { SetOptionsTool } from '../backend/tools/SetOptionsTool';
+import { SorobanEventIndexerTool } from '../backend/tools/SorobanEventIndexerTool';
+import { StellarIdentityTool } from '../backend/tools/StellarIdentityTool';
+import { BalanceStreamTool } from '../backend/tools/BalanceStreamTool';
 import { ValidationError, UnauthorizedError, ErrorType } from '../backend/errors';
 
 vi.mock('../backend/tools/StellarPaymentTool', () => ({
@@ -149,6 +154,43 @@ vi.mock('../backend/tools/InflationTool', () => ({
 vi.mock('../backend/tools/ContractEventListener', () => ({
   listen: vi.fn().mockReturnValue(() => {}),
 }));
+
+vi.mock('../backend/tools/ClaimableBalanceTool', () => ({
+  ClaimableBalanceTool: vi.fn().mockImplementation(() => ({
+    execute: vi.fn().mockResolvedValue({ txHash: 'claimable_mock_hash', ledger: 1 }),
+  })),
+}));
+
+vi.mock('../backend/tools/SetOptionsTool', () => ({
+  SetOptionsTool: vi.fn().mockImplementation(() => ({
+    execute: vi.fn().mockResolvedValue({ txHash: 'set_options_mock_hash', ledger: 1 }),
+  })),
+}));
+
+vi.mock('../backend/tools/SorobanEventIndexerTool', () => ({
+  SorobanEventIndexerTool: vi.fn().mockImplementation(() => ({
+    query: vi.fn().mockResolvedValue({ events: [], latestLedger: 100 }),
+  })),
+}));
+
+vi.mock('../backend/tools/StellarIdentityTool', () => ({
+  StellarIdentityTool: vi.fn().mockImplementation(() => ({
+    execute: vi.fn().mockResolvedValue({ token: 'mock_jwt_token' }),
+  })),
+}));
+
+vi.mock('../backend/tools/BalanceStreamTool', () => {
+  const { EventEmitter } = require('events');
+  return {
+    BalanceStreamTool: vi.fn().mockImplementation(() => {
+      const emitter = new EventEmitter();
+      return {
+        subscribe: vi.fn().mockReturnValue(emitter),
+        stop: vi.fn(),
+      };
+    }),
+  };
+});
 
 vi.mock('../backend/webhook', () => ({
   dispatchWebhook: vi.fn().mockResolvedValue(undefined),
@@ -699,6 +741,120 @@ describe('PayFiAgent — spending-limit enforcement across all money-moving task
   });
 });
 
+// Audit finding Q-1: ClaimableBalanceTool, SetOptionsTool, SorobanEventIndexerTool,
+// StellarIdentityTool, and BalanceStreamTool were fully implemented and tested in
+// isolation but never wired into PayFiAgent's dispatch, making them dead code in
+// the running application. These tests pin the wiring now that it exists.
+describe('PayFiAgent — newly wired tools (audit Q-1)', () => {
+  let agent: PayFiAgent;
+
+  beforeEach(() => {
+    spendingTracker.clear();
+    vi.mocked(ClaimableBalanceTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 'q1_claimable_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(SetOptionsTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 'q1_set_options_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(SorobanEventIndexerTool).mockImplementation(
+      () => ({ query: vi.fn().mockResolvedValue({ events: [], latestLedger: 42 }) }) as any
+    );
+    vi.mocked(StellarIdentityTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ token: 'q1_mock_jwt' }) }) as any
+    );
+    vi.mocked(BalanceStreamTool).mockImplementation(
+      () =>
+        ({
+          subscribe: vi.fn().mockReturnValue(new (require('events').EventEmitter)()),
+          stop: vi.fn(),
+        }) as any
+    );
+    agent = new PayFiAgent();
+  });
+
+  it('dispatches claimable_balance (create) and returns success', async () => {
+    const result = await agent.run({
+      type: 'claimable_balance',
+      payload: {
+        action: 'create',
+        assetCode: 'XLM',
+        amount: '10',
+        claimants: [{ destination: DEST }],
+      },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.txHash).toBe('q1_claimable_hash');
+  });
+
+  it('rejects a claimable_balance create above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'claimable_balance',
+      payload: {
+        action: 'create',
+        assetCode: 'XLM',
+        amount: '11000',
+        claimants: [{ destination: DEST }],
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('does not apply the cap to a claimable_balance claim (no funds committed)', async () => {
+    const result = await agent.run({
+      type: 'claimable_balance',
+      payload: { action: 'claim', balanceId: 'balance-1' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('dispatches set_options and returns success', async () => {
+    const result = await agent.run({
+      type: 'set_options',
+      payload: { homeDomain: 'example.com' },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.txHash).toBe('q1_set_options_hash');
+  });
+
+  it('dispatches soroban_events and returns success', async () => {
+    const result = await agent.run({
+      type: 'soroban_events',
+      payload: {
+        contractId: 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+        fromLedger: 1,
+        toLedger: 100,
+      },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.latestLedger).toBe(42);
+  });
+
+  it('dispatches web_auth and returns success', async () => {
+    const result = await agent.run({
+      type: 'web_auth',
+      payload: { anchorUrl: 'https://anchor.example.com' },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.token).toBe('q1_mock_jwt');
+  });
+
+  it('startBalanceStream subscribes and forwards balance events; stopBalanceStream stops it', () => {
+    const events: unknown[] = [];
+    agent.startBalanceStream(DEST, (event) => events.push(event));
+
+    const mockInstance = vi.mocked(BalanceStreamTool).mock.results[0]!.value;
+    expect(mockInstance.subscribe).toHaveBeenCalledWith(DEST);
+
+    const emitter = mockInstance.subscribe.mock.results[0]!.value;
+    emitter.emit('balance', { assetCode: 'XLM', amount: '5', direction: 'credit' });
+    expect(events).toEqual([{ assetCode: 'XLM', amount: '5', direction: 'credit' }]);
+
+    agent.stopBalanceStream();
+    expect(mockInstance.stop).toHaveBeenCalled();
+  });
+});
+
 describe('AgentResult snapshot', () => {
   let agent: PayFiAgent;
 
@@ -804,6 +960,9 @@ describe('PayFiAgent — new task types', () => {
         ({
           execute: vi.fn().mockResolvedValue({ txHash: 'dex_mock_hash', ledger: 1, offerId: '0' }),
         }) as any
+    );
+    vi.mocked(BalanceStreamTool).mockImplementation(
+      () => ({ subscribe: vi.fn(), stop: vi.fn() }) as any
     );
     agent = new PayFiAgent();
   });

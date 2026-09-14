@@ -40,6 +40,11 @@ import { SorobanDeployTool } from './tools/SorobanDeployTool';
 import { SwapTool } from './tools/SwapTool';
 import { AccountHistoryTool } from './tools/AccountHistoryTool';
 import { listen as listenContractEvents } from './tools/ContractEventListener';
+import { ClaimableBalanceTool } from './tools/ClaimableBalanceTool';
+import { SetOptionsTool } from './tools/SetOptionsTool';
+import { SorobanEventIndexerTool } from './tools/SorobanEventIndexerTool';
+import { StellarIdentityTool } from './tools/StellarIdentityTool';
+import { BalanceStreamTool, type BalanceEvent } from './tools/BalanceStreamTool';
 
 import { horizonServer } from './rpc_client';
 import * as rpcClient from './rpc_client';
@@ -106,7 +111,11 @@ export type TaskType =
   | 'inflation'
   | 'soroban_deploy'
   | 'swap'
-  | 'account_history';
+  | 'account_history'
+  | 'claimable_balance'
+  | 'set_options'
+  | 'soroban_events'
+  | 'web_auth';
 
 export interface AgentTask {
   type: TaskType;
@@ -255,6 +264,11 @@ export class PayFiAgent extends EventEmitter {
   private sorobanDeployTool: SorobanDeployTool;
   private swapTool: SwapTool;
   private accountHistoryTool: AccountHistoryTool;
+  private claimableBalanceTool: ClaimableBalanceTool;
+  private setOptionsTool: SetOptionsTool;
+  private sorobanEventIndexerTool: SorobanEventIndexerTool;
+  private stellarIdentityTool: StellarIdentityTool;
+  private balanceStreamTool: BalanceStreamTool;
 
   private activeTasks = 0;
   private isDraining = false;
@@ -301,6 +315,11 @@ export class PayFiAgent extends EventEmitter {
     this.sorobanDeployTool = new SorobanDeployTool();
     this.swapTool = new SwapTool(config.agentKeypair().secret());
     this.accountHistoryTool = new AccountHistoryTool();
+    this.claimableBalanceTool = new ClaimableBalanceTool(config.agentKeypair().secret());
+    this.setOptionsTool = new SetOptionsTool(config.agentKeypair().secret());
+    this.sorobanEventIndexerTool = new SorobanEventIndexerTool();
+    this.stellarIdentityTool = new StellarIdentityTool(config.agentKeypair().secret());
+    this.balanceStreamTool = new BalanceStreamTool();
 
     // ── Register event listeners — every registration is mirrored in destroy() ──
     const onError = (err: Error) => {
@@ -415,6 +434,33 @@ export class PayFiAgent extends EventEmitter {
   }
 
   /**
+   * Start streaming balance-change events (credits/debits) for a Stellar
+   * account via Horizon's SSE /effects endpoint.
+   *
+   * @param publicKey - Stellar account to monitor (defaults to the agent's own).
+   * @param onBalance  - Callback invoked for each credit/debit event.
+   * @param onError    - Optional callback invoked if the underlying stream errors.
+   */
+  startBalanceStream(
+    publicKey: string,
+    onBalance: (event: BalanceEvent) => void,
+    onError?: (error: unknown) => void
+  ): void {
+    const emitter = this.balanceStreamTool.subscribe(publicKey);
+    emitter.on('balance', onBalance);
+    if (onError) {
+      emitter.on('error', onError);
+    }
+    logger.info('Balance stream started', { publicKey });
+  }
+
+  /** Stop the active balance stream subscription. */
+  stopBalanceStream(): void {
+    this.balanceStreamTool.stop();
+    logger.info('Balance stream stopped');
+  }
+
+  /**
    * Detach all registered event listeners and release internal resources.
    *
    * Must be called by the lifecycle manager when an agent instance is
@@ -430,6 +476,7 @@ export class PayFiAgent extends EventEmitter {
   destroy(): void {
     this.stopListening();
     this.stopContractListener();
+    this.stopBalanceStream();
     for (const [event, handler] of this._boundHandlers) {
       this.off(event, handler);
     }
@@ -732,6 +779,27 @@ export class PayFiAgent extends EventEmitter {
 
           case 'inflation':
             data = await this.inflationTool.execute(task.payload);
+            break;
+
+          case 'claimable_balance': {
+            const p = task.payload as Record<string, unknown>;
+            if (p?.action === 'create') {
+              assertWithinSpendingLimit(p?.amount);
+            }
+            data = await this.claimableBalanceTool.execute(task.payload);
+            break;
+          }
+
+          case 'set_options':
+            data = await this.setOptionsTool.execute(task.payload);
+            break;
+
+          case 'soroban_events':
+            data = await this.sorobanEventIndexerTool.query(task.payload);
+            break;
+
+          case 'web_auth':
+            data = await this.stellarIdentityTool.execute(task.payload);
             break;
 
           default:
