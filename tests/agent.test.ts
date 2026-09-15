@@ -557,7 +557,8 @@ describe('PayFiAgent — spending-limit enforcement across all money-moving task
     // the spending guard) needs its mock re-applied here, same as the
     // "task dispatch matrix" describe block below.
     vi.mocked(MultiSigPaymentTool).mockImplementation(
-      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_multisig_hash', ledger: 1 }) }) as any
+      () =>
+        ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_multisig_hash', ledger: 1 }) }) as any
     );
     vi.mocked(BatchPaymentTool).mockImplementation(
       () =>
@@ -751,10 +752,14 @@ describe('PayFiAgent — newly wired tools (audit Q-1)', () => {
   beforeEach(() => {
     spendingTracker.clear();
     vi.mocked(ClaimableBalanceTool).mockImplementation(
-      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 'q1_claimable_hash', ledger: 1 }) }) as any
+      () =>
+        ({ execute: vi.fn().mockResolvedValue({ txHash: 'q1_claimable_hash', ledger: 1 }) }) as any
     );
     vi.mocked(SetOptionsTool).mockImplementation(
-      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 'q1_set_options_hash', ledger: 1 }) }) as any
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({ txHash: 'q1_set_options_hash', ledger: 1 }),
+        }) as any
     );
     vi.mocked(SorobanEventIndexerTool).mockImplementation(
       () => ({ query: vi.fn().mockResolvedValue({ events: [], latestLedger: 42 }) }) as any

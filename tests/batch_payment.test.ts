@@ -96,7 +96,7 @@ describe('BatchPaymentTool', () => {
 
   // Audit finding Q-5: StellarPaymentTool guards against paying the agent's
   // own address; BatchPaymentTool previously had no equivalent per-payment check.
-  it('rejects a batch payment whose destination is the agent\'s own address (Q-5)', async () => {
+  it("rejects a batch payment whose destination is the agent's own address (Q-5)", async () => {
     const { Keypair } = await import('@stellar/stellar-sdk');
     const ownPublicKey = Keypair.fromSecret(
       'SADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP54X'

@@ -77,7 +77,7 @@ describe('MultiSigPaymentTool', () => {
   // Audit finding Q-5: StellarPaymentTool/PathPaymentTool guard against paying
   // the agent's own address; MultiSigPaymentTool previously had no equivalent
   // check despite building the same kind of payment operation.
-  it('rejects a destination equal to the agent\'s own public key (Q-5)', async () => {
+  it("rejects a destination equal to the agent's own public key (Q-5)", async () => {
     const { Keypair } = await import('@stellar/stellar-sdk');
     const ownPublicKey = Keypair.fromSecret(TEST_SECRET).publicKey();
 

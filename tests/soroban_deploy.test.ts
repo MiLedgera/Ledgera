@@ -137,9 +137,9 @@ describe('SorobanDeployTool', () => {
     it('propagates a simulation failure without submitting', async () => {
       mockSorobanServer.setSimulationError(new Error('Soroban simulation failed: budget_exceeded'));
 
-      await expect(
-        tool.execute({ action: 'upload', wasm: MOCK_WASM_BUFFER })
-      ).rejects.toThrow('Soroban simulation failed');
+      await expect(tool.execute({ action: 'upload', wasm: MOCK_WASM_BUFFER })).rejects.toThrow(
+        'Soroban simulation failed'
+      );
       expect(mockSorobanServer.sorobanServer.sendTransaction).not.toHaveBeenCalled();
     });
 
@@ -153,9 +153,9 @@ describe('SorobanDeployTool', () => {
         },
       });
 
-      await expect(
-        tool.execute({ action: 'upload', wasm: MOCK_WASM_BUFFER })
-      ).rejects.toThrow(/MAX_SOROBAN_FEE_STROOPS/);
+      await expect(tool.execute({ action: 'upload', wasm: MOCK_WASM_BUFFER })).rejects.toThrow(
+        /MAX_SOROBAN_FEE_STROOPS/
+      );
     });
   });
 
