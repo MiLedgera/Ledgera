@@ -141,6 +141,15 @@ export function createHealthServer(): http.Server {
 
     // ── GET /status ────────────────────────────────────────────────────────
     if (req.method === 'GET' && req.url === STATUS_PATH) {
+      // Same gate as /spending — recent AgentResult records (correlation IDs,
+      // error text, tool return data such as unsigned multisig XDR) should not
+      // be readable by anyone who can reach the health port (audit finding S-2).
+      if (!isAuthenticated(req)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+
       try {
         const results = getResults(10);
         const body = JSON.stringify({ results });
