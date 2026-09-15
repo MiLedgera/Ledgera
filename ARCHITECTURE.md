@@ -1,12 +1,12 @@
-# Nodal AI System Architecture
+# Ledgera System Architecture
 
-This document provides a deep dive into the architecture of Nodal AI, explaining the core components, transaction lifecycles, security gates, and tool dispatch flows.
+This document provides a deep dive into the architecture of Ledgera, explaining the core components, transaction lifecycles, security gates, and tool dispatch flows.
 
 ---
 
 ## Directory Structure Rationale
 
-Nodal AI is structured into three clean pillars to isolate concerns, simplify development, and optimize security:
+Ledgera is structured into three clean pillars to isolate concerns, simplify development, and optimize security:
 
 ```text
 /
@@ -287,7 +287,7 @@ The smart contract in [contracts/escrow/src/lib.rs](./contracts/escrow/src/lib.r
 
 ## x402 Challenge-Response Flow
 
-Nodal AI implements the `x402` payment protocol via `X402PaymentTool.ts` to allow autonomous payment responses for gated resource challenges:
+Ledgera implements the `x402` payment protocol via `X402PaymentTool.ts` to allow autonomous payment responses for gated resource challenges:
 
 ```mermaid
 sequenceDiagram

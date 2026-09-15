@@ -1,5 +1,5 @@
 {
-  "name": "Nodal AI",
+  "name": "Ledgera",
   "image": "mcr.microsoft.com/devcontainers/typescript-node:20",
 
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,consistency=cached",
@@ -8,7 +8,7 @@
   "forwardPorts": [3000],
   "portsAttributes": {
     "3000": {
-      "label": "Nodal AI agent",
+      "label": "Ledgera agent",
       "onAutoForward": "notify"
     }
   },

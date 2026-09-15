@@ -1,4 +1,4 @@
-# Current-State Audit — Ledgera / "Nodal AI" (stellar-agent-kit)
+# Current-State Audit — Ledgera (stellar-agent-kit)
 
 **Audit date:** 2026-09-13
 **Auditor:** Claude Code, automated repository audit (Phase 1 of a requested 6-phase audit/redesign/skeletonization engagement)
@@ -223,7 +223,7 @@ Multi-stage `Dockerfile` (rust-builder → node-builder → prod-deps → produc
 - **Recommended action:** Regenerate this section from `agent.ts`'s actual `TaskType` union (ideally via TypeDoc, which CI already generates, rather than hand-maintained prose).
 
 #### D-3. README overstates the universality of the simulation guarantee (**Low**)
-- **Evidence:** README.md's "Why Nodal AI?" section (line ~16) states transactions are simulated before broadcast; the README's own detail section (line ~496) correctly caveats that Horizon-based tools (`StellarPaymentTool` and everything built on it) have no simulation step because Horizon has no simulation endpoint. The headline claim is only true for the Soroban-invocation path.
+- **Evidence:** README.md's "Why Ledgera?" section (line ~16) states transactions are simulated before broadcast; the README's own detail section (line ~496) correctly caveats that Horizon-based tools (`StellarPaymentTool` and everything built on it) have no simulation step because Horizon has no simulation endpoint. The headline claim is only true for the Soroban-invocation path.
 
 #### D-4. contracts/escrow/README.md doesn't match lib.rs (**Medium**, cross-referenced as [B-2](#b-2-escrow-contract-documentation-lags-the-code-medium))
 

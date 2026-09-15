@@ -1,4 +1,4 @@
-# Remediation Report — Ledgera / "Nodal AI" (stellar-agent-kit)
+# Remediation Report — Ledgera (stellar-agent-kit)
 
 **Date:** 2026-09-15
 **Branch:** `audit/remediation` (off `main` at `7032826`)

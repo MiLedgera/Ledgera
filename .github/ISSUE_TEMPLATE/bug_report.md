@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug to help us improve Nodal AI
+about: Report a bug to help us improve Ledgera
 title: "[BUG] "
 labels: bug
 assignees: ''

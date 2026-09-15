@@ -1,15 +1,15 @@
-# Nodal AI
+# Ledgera
 
-[![CI](https://github.com/Nodal-stellar/Nodal-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Nodal-stellar/Nodal-AI/actions/workflows/ci.yml)
+[![CI](https://github.com/MiLedgera/Ledgera/actions/workflows/ci.yml/badge.svg)](https://github.com/MiLedgera/Ledgera/actions/workflows/ci.yml)
 **Modular, production-ready Agent Kit for autonomous PayFi (Payment-Finance) flows on the Stellar Network.**
 
-Nodal AI empowers developers to build autonomous agents capable of handling complex financial interactions. Whether you’re automating cross-border settlements, building machine-to-machine payment gateways, or orchestrating smart contract executions, Nodal AI provides the primitives to do it securely and efficiently on Stellar.
+Ledgera empowers developers to build autonomous agents capable of handling complex financial interactions. Whether you’re automating cross-border settlements, building machine-to-machine payment gateways, or orchestrating smart contract executions, Ledgera provides the primitives to do it securely and efficiently on Stellar.
 
 ---
 
-## Why Nodal AI?
+## Why Ledgera?
 
-In the era of **PayFi**, payments are no longer just passive transfers they are programmable, autonomous, and integrated into the global financial fabric. Nodal AI bridges the gap between AI reasoning and Stellar's high-speed, low-cost network.
+In the era of **PayFi**, payments are no longer just passive transfers they are programmable, autonomous, and integrated into the global financial fabric. Ledgera bridges the gap between AI reasoning and Stellar's high-speed, low-cost network.
 
 - **Autonomous PayFi:** Built-in support for the `x402` payment standard, enabling seamless machine-to-machine value exchange.
 - **Modular Architecture:** Swap in new tools, chain actions, and orchestrate complex workflows without touching core signing logic.
@@ -19,7 +19,7 @@ In the era of **PayFi**, payments are no longer just passive transfers they are 
 
 ## Architecture
 
-Nodal AI is built on a clean, three-pillar separation of concerns. For a deep dive into the system design, tool dispatch, simulation gates, and state machines, please read the [Architecture Guide](./ARCHITECTURE.md).
+Ledgera is built on a clean, three-pillar separation of concerns. For a deep dive into the system design, tool dispatch, simulation gates, and state machines, please read the [Architecture Guide](./ARCHITECTURE.md).
 
 If you are new to the Stellar-specific terms used throughout the repo, see the [Glossary](./GLOSSARY.md).
 
@@ -38,8 +38,8 @@ If you are new to the Stellar-specific terms used throughout the repo, see the [
 1. **Clone & Configure:**
 
    ```bash
-   git clone https://github.com/Nodal-stellar/Nodal-AI.git
-   cd nodal-ai
+   git clone https://github.com/MiLedgera/Ledgera.git
+   cd Ledgera
    cp .env.example .env
    ```
 
@@ -84,11 +84,11 @@ We use `Vitest` to ensure the entire flow—from AI reasoning to network settlem
 
 ## Docker
 
-Nodal AI includes a multi-stage Dockerfile and Docker Compose stack for local development, testing, and deployment.
+Ledgera includes a multi-stage Dockerfile and Docker Compose stack for local development, testing, and deployment.
 
 ### Running with Docker Compose
 
-1. **Start the local Stellar network and Nodal agent:**
+1. **Start the local Stellar network and Ledgera agent:**
 
    ```bash
    docker-compose up --build
@@ -125,7 +125,7 @@ docker-compose --profile test-only up --build --abort-on-container-exit --exit-c
 
 ## Development Environment (Devcontainer & Codespaces)
 
-For zero-setup provisioning, Nodal AI ships a [VS Code Dev Container](https://containers.dev/) configuration in [`.devcontainer/`](./.devcontainer/devcontainer.json). It gives you Node 20, the Rust toolchain (with the `wasm32-unknown-unknown` target), and the Stellar CLI, pre-installed, with no local setup required.
+For zero-setup provisioning, Ledgera ships a [VS Code Dev Container](https://containers.dev/) configuration in [`.devcontainer/`](./.devcontainer/devcontainer.json). It gives you Node 20, the Rust toolchain (with the `wasm32-unknown-unknown` target), and the Stellar CLI, pre-installed, with no local setup required.
 
 **Using VS Code:**
 
@@ -145,7 +145,7 @@ The container forwards port `3000` and preinstalls `dbaeumer.vscode-eslint`, `es
 
 Security is the foundation of PayFi. See [SECURITY.md](./SECURITY.md) for the full responsible disclosure policy, response SLAs, core security invariants, and secret management guidelines.
 
-To report a vulnerability privately, use [GitHub Security Advisories](https://github.com/Nodal-stellar/Nodal-AI/security/advisories/new).
+To report a vulnerability privately, use [GitHub Security Advisories](https://github.com/MiLedgera/Ledgera/security/advisories/new).
 
 ### Spending Limit Enforcement
 
@@ -176,7 +176,7 @@ All four checks are enforced at startup via `backend/config.ts` validation and a
 
 We are actively participating in the **Stellar Wave** program! We welcome contributions ranging from bug fixes to new tool modules.
 
-1.  Check the [Issues](https://github.com/Nodal-stellar/Nodal-AI/issues) tab for tickets tagged `good first issue` or `help wanted`.
+1.  Check the [Issues](https://github.com/MiLedgera/Ledgera/issues) tab for tickets tagged `good first issue` or `help wanted`.
 2.  Follow the [CONTRIBUTING.md](./CONTRIBUTING.md) guide.
 3.  Submit a Pull Request and join our community in the next Wave sprint to earn Drips points for your contributions!
 
@@ -405,7 +405,7 @@ agent.destroy();
 
 ## x402 Payment Flow
 
-Nodal AI implements the [x402](https://github.com/x402-foundation/x402) protocol so the agent can pay for gated resources autonomously. The verified flow below covers what happens once `PayFiAgent.run()` is dispatched an `x402_respond` task — the upstream step of a resource server actually issuing the 402 challenge happens outside this codebase (in whatever client first calls `PayFiAgent.run()`), so it's described in prose rather than diagrammed.
+Ledgera implements the [x402](https://github.com/x402-foundation/x402) protocol so the agent can pay for gated resources autonomously. The verified flow below covers what happens once `PayFiAgent.run()` is dispatched an `x402_respond` task — the upstream step of a resource server actually issuing the 402 challenge happens outside this codebase (in whatever client first calls `PayFiAgent.run()`), so it's described in prose rather than diagrammed.
 
 ```mermaid
 sequenceDiagram

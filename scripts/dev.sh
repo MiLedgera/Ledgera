@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/dev.sh — Nodal AI unified stack runner
+# scripts/dev.sh — Ledgera unified stack runner
 #
 # Usage:
 #   ./scripts/dev.sh up                     # build + start full stack
@@ -98,7 +98,7 @@ cmd_dry_run() {
 
 cmd_up() {
   require_env
-  log "Building and starting Nodal AI stack..."
+  log "Building and starting Ledgera stack..."
   $COMPOSE up --build -d
   log "Stack is running."
   log "  Horizon    : http://localhost:8000"

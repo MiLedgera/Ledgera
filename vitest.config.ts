@@ -1,7 +1,7 @@
 /**
  * vitest.config.ts
  *
- * Vitest configuration for Nodal AI.
+ * Vitest configuration for Ledgera.
  *
  * ## Key Configuration Details:
  *

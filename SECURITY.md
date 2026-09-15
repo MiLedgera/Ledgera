@@ -29,7 +29,7 @@ High and Critical findings are not accepted as routine CI noise. If remediation 
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Use [GitHub Private Security Advisories](https://github.com/Nodal-stellar/Nodal-AI/security/advisories/new) to report vulnerabilities confidentially. This keeps details private until a fix is released.
+Use [GitHub Private Security Advisories](https://github.com/MiLedgera/Ledgera/security/advisories/new) to report vulnerabilities confidentially. This keeps details private until a fix is released.
 
 ### Response SLA
 
@@ -252,7 +252,7 @@ console.log('✅ Old signer removed:', txResult.id);
 
 ## Known Limitations
 
-Users should be aware of the following limitations when deploying Nodal AI:
+Users should be aware of the following limitations when deploying Ledgera:
 
 ### 1. Nonce Store Is Not Shared Across Horizontally-Scaled Instances
 
