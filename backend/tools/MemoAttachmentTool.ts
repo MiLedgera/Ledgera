@@ -4,19 +4,20 @@
  */
 
 import { Memo } from '@stellar/stellar-sdk';
+import { ValidationError } from '../errors';
+
+// Re-exported so existing importers keep working — this module previously
+// declared its own local ValidationError class, distinct from backend/errors.ts's.
+// That meant an error thrown from here was invisible to middleware/error_handler.ts's
+// `instanceof StructuredError` check and got misclassified as a 500 instead of a
+// 400 at any HTTP boundary that used it (audit finding Q-3).
+export { ValidationError };
 
 export type MemoType = 'MEMO_TEXT' | 'MEMO_HASH' | 'MEMO_ID' | 'MEMO_RETURN';
 
 export interface MemoOptions {
   type: MemoType;
   value: string;
-}
-
-export class ValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ValidationError';
-  }
 }
 
 /**
