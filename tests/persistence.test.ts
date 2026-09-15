@@ -4,9 +4,9 @@
  * Tests for backend/persistence.ts using an in-memory SQLite database.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { saveResult, getResults, _setDb } from '../backend/persistence';
+import { saveResult, getResults, _setDb, closeDb } from '../backend/persistence';
 import type { AgentResult } from '../backend/agent';
 
 function makeInMemoryDb(): Database.Database {
@@ -189,5 +189,23 @@ describe('persistence', () => {
     // an empty collection — not an error.
     const byCorrelation = allResults.filter((r) => r.correlationId === 'phantom-id-does-not-exist');
     expect(byCorrelation).toHaveLength(0);
+  });
+
+  // Audit finding Q-8: DatabaseManager.close() (backend/db/client.ts) flipped
+  // an internal flag but never closed the actual better-sqlite3 handle that
+  // getDb() owns. closeDb() is what DatabaseManager.close() now delegates to.
+  describe('closeDb()', () => {
+    it('closes the underlying better-sqlite3 handle exactly once, and is idempotent', () => {
+      const injectedDb = makeInMemoryDb();
+      const closeSpy = vi.spyOn(injectedDb, 'close');
+      _setDb(injectedDb);
+
+      closeDb();
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+
+      // A second call must not throw or attempt to close an already-closed handle.
+      expect(() => closeDb()).not.toThrow();
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

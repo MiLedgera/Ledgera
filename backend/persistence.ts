@@ -77,6 +77,20 @@ export function probeDb(): void {
   getDb().prepare('SELECT 1').get();
 }
 
+/**
+ * Close the underlying `better-sqlite3` handle, if one is open.
+ *
+ * `getDb()` owns the only handle (see `probeDb()`'s comment above), so
+ * closing it belongs here too — DatabaseManager.close() delegates to this
+ * rather than tracking a second reference to the same connection.
+ */
+export function closeDb(): void {
+  if (_db) {
+    _db.close();
+    _db = null;
+  }
+}
+
 export function saveResult(result: PersistedResult): void {
   getDb()
     .prepare(

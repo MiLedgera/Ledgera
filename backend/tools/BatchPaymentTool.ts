@@ -76,6 +76,7 @@ export class BatchPaymentTool {
 
     // Pre-flight every payment before touching the network. Nothing here can be
     // partially applied, so a problem found now costs the caller nothing.
+    const agentPublicKey = this.keypair.publicKey();
     const problems: string[] = [];
     for (let i = 0; i < payments.length; i++) {
       const p = payments[i]!;
@@ -83,6 +84,12 @@ export class BatchPaymentTool {
         problems.push(`payment ${i}: Asset issuer is required for non-native asset ${p.assetCode}`);
         if (failFast) {
           // Everything behind the failure is left untouched.
+          throw new BatchPreflightError(problems[0]!, payments.length - i - 1);
+        }
+      }
+      if (p.destination === agentPublicKey) {
+        problems.push(`payment ${i}: Payment destination cannot be the agent's own address`);
+        if (failFast) {
           throw new BatchPreflightError(problems[0]!, payments.length - i - 1);
         }
       }
