@@ -10,21 +10,26 @@ injecting large data segments, and the binary would still load and run normally.
 
 | Setting | Value |
 | :--- | :--- |
-| Budget | **200,000 bytes** (~195 KiB) |
+| Budget | **120,000 bytes** (~117 KiB) |
 | Where enforced | `.github/workflows/ci.yml` → `wasm-size-check` job |
 | Check script | `scripts/check_wasm_size.sh` |
 | Override | `MAX_WASM_SIZE_BYTES` environment variable |
 
-## Why 200,000 bytes?
+## Why 120,000 bytes?
 
-- The escrow contract is small; a legitimate release build is far below this
-  threshold, so the budget does not constrain normal development.
-- 200,000 bytes leaves generous headroom for legitimate growth (new features,
-  dependencies) while still failing loudly if an attack injects a large data
-  segment into the binary.
+- **It must stay below Stellar's network deploy limit.** The budget's whole
+  purpose is to catch bloat "before deployment" — a budget looser than the
+  network's own hard limit (131,072 bytes, see below) fails to do that: a
+  binary could pass this check yet still be rejected at deploy time. A
+  previous version of this document set the budget to 200,000 bytes, which
+  exceeded the network limit and defeated the check's stated purpose.
+  120,000 keeps roughly 8% headroom below the 131,072-byte ceiling.
+- The escrow contract is small; a legitimate release build is expected to be
+  far below this threshold, so the budget does not constrain normal
+  development.
 - The budget is deliberately **explicit and adjustable**: when the contract
-  legitimately outgrows it, raise `MAX_WASM_SIZE_BYTES` in CI as part of the
-  change that grew the contract — never silently.
+  legitimately grows, raise `MAX_WASM_SIZE_BYTES` in CI as part of the change
+  that grew it — never silently, and never above the network limit below.
 
 ## How the check works
 

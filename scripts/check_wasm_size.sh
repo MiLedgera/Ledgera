@@ -12,8 +12,9 @@
 #
 # Defaults:
 #   WASM_PATH  contracts/escrow/target/wasm32-unknown-unknown/release/stellar_payfi_escrow.wasm
-#   MAX_BYTES  200000 (see contracts/escrow/WASM_SIZE_BUDGET.md),
-#              or $MAX_WASM_SIZE_BYTES if set
+#   MAX_BYTES  120000 (see contracts/escrow/WASM_SIZE_BUDGET.md — kept below
+#              Stellar's 131,072-byte network deploy limit, unlike the prior
+#              200,000 default), or $MAX_WASM_SIZE_BYTES if set
 #
 # Exit codes:
 #   0  WASM is present, valid, and within budget
@@ -22,7 +23,7 @@
 set -euo pipefail
 
 WASM_PATH="${1:-contracts/escrow/target/wasm32-unknown-unknown/release/stellar_payfi_escrow.wasm}"
-MAX_BYTES="${2:-${MAX_WASM_SIZE_BYTES:-200000}}"
+MAX_BYTES="${2:-${MAX_WASM_SIZE_BYTES:-120000}}"
 
 if [[ ! -f "${WASM_PATH}" ]]; then
   echo "ERROR: WASM not found at ${WASM_PATH}" >&2
