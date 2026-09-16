@@ -10,7 +10,7 @@ assignees: ''
 <!--
   ⚠️  STOP — DO NOT FILE A PUBLIC ISSUE FOR SECURITY VULNERABILITIES  ⚠️
 
-  If you have discovered a vulnerability in Nodal AI, please report it
+  If you have discovered a vulnerability in Ledgera, please report it
   privately so that it can be triaged and patched before public disclosure.
 
   Public issues expose all users to risk before a fix is available.
@@ -20,7 +20,7 @@ assignees: ''
 
 Report vulnerabilities confidentially via:
 
-**[🔒 Open a private Security Advisory](https://github.com/Nodal-stellar/Nodal-AI/security/advisories/new)**
+**[🔒 Open a private Security Advisory](https://github.com/MiLedgera/Ledgera/security/advisories/new)**
 
 This ensures:
 - The report is visible only to maintainers

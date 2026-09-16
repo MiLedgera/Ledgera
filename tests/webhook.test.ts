@@ -2,9 +2,9 @@
  * tests/webhook.test.ts
  * Tests for dispatchWebhook: delivery, HMAC signature, retry, and no-op when unconfigured.
  *
- * Issue #448: HMAC signing implemented in backend/webhook.ts (X-Nodal-Signature header).
+ * Issue #448: HMAC signing implemented in backend/webhook.ts (X-Ledgera-Signature header).
  * Tests verify:
- *   - Dispatched request includes X-Nodal-Signature with correct HMAC value
+ *   - Dispatched request includes X-Ledgera-Signature with correct HMAC value
  *   - Signature can be independently verified with the shared secret
  *   - A tampered payload produces a detectable HMAC mismatch
  *   - Signature header is absent when WEBHOOK_SECRET is not configured
@@ -156,7 +156,7 @@ describe('dispatchWebhook', () => {
     });
   });
 
-  it('includes X-Nodal-Signature header when WEBHOOK_SECRET is set', async () => {
+  it('includes X-Ledgera-Signature header when WEBHOOK_SECRET is set', async () => {
     (globalThis as any).__webhookUrl = 'https://example.com/webhook';
     (globalThis as any).__webhookSecret = 'supersecret';
     axiosPost.mockResolvedValueOnce({ status: 200 });
@@ -168,7 +168,7 @@ describe('dispatchWebhook', () => {
     if (!call) return;
     const [, body, opts] = call;
     const expectedSig = signPayload(body as string, 'supersecret');
-    expect(opts.headers['X-Nodal-Signature']).toBe(expectedSig);
+    expect(opts.headers['X-Ledgera-Signature']).toBe(expectedSig);
   });
 
   it('POSTs on task failure result as well', async () => {
@@ -316,22 +316,22 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
 
   // ── Presence and format ───────────────────────────────────────────────────
 
-  it('dispatched request includes an X-Nodal-Signature header', async () => {
+  it('dispatched request includes an X-Ledgera-Signature header', async () => {
     await dispatchWebhook(successResult);
 
     const [, , opts] = axiosPost.mock.calls[0]!;
-    expect(opts.headers).toHaveProperty('X-Nodal-Signature');
-    expect(typeof opts.headers['X-Nodal-Signature']).toBe('string');
-    expect(opts.headers['X-Nodal-Signature']).toHaveLength(64); // 32-byte SHA-256 → 64 hex chars
+    expect(opts.headers).toHaveProperty('X-Ledgera-Signature');
+    expect(typeof opts.headers['X-Ledgera-Signature']).toBe('string');
+    expect(opts.headers['X-Ledgera-Signature']).toHaveLength(64); // 32-byte SHA-256 → 64 hex chars
   });
 
-  it('X-Nodal-Signature header is absent when WEBHOOK_SECRET is not configured', async () => {
+  it('X-Ledgera-Signature header is absent when WEBHOOK_SECRET is not configured', async () => {
     (globalThis as any).__webhookSecret = undefined;
 
     await dispatchWebhook(successResult);
 
     const [, , opts] = axiosPost.mock.calls[0]!;
-    expect(opts.headers).not.toHaveProperty('X-Nodal-Signature');
+    expect(opts.headers).not.toHaveProperty('X-Ledgera-Signature');
   });
 
   // ── Correctness ───────────────────────────────────────────────────────────
@@ -340,7 +340,7 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
     await dispatchWebhook(successResult);
 
     const [, body, opts] = axiosPost.mock.calls[0]!;
-    const signature: string = opts.headers['X-Nodal-Signature'];
+    const signature: string = opts.headers['X-Ledgera-Signature'];
 
     // Independently verify: receiver recomputes HMAC over the exact body bytes
     expect(verifySignature(body, SECRET, signature)).toBe(true);
@@ -350,7 +350,7 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
     await dispatchWebhook(successResult);
 
     const [, body, opts] = axiosPost.mock.calls[0]!;
-    const signature: string = opts.headers['X-Nodal-Signature'];
+    const signature: string = opts.headers['X-Ledgera-Signature'];
 
     // The body must be the JSON serialisation of successResult
     expect(JSON.parse(body)).toMatchObject({ success: true, taskType: 'stellar_payment' });
@@ -365,14 +365,14 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
 
     await dispatchWebhook(successResult);
     const [, , opts1] = axiosPost.mock.calls[0]!;
-    const sig1: string = opts1.headers['X-Nodal-Signature'];
+    const sig1: string = opts1.headers['X-Ledgera-Signature'];
 
     vi.clearAllMocks();
     axiosPost.mockResolvedValue({ status: 200 });
 
     await dispatchWebhook(failureResult);
     const [, , opts2] = axiosPost.mock.calls[0]!;
-    const sig2: string = opts2.headers['X-Nodal-Signature'];
+    const sig2: string = opts2.headers['X-Ledgera-Signature'];
 
     expect(sig1).not.toBe(sig2);
   });
@@ -390,7 +390,7 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
     await dispatchWebhook(successResult);
 
     const [, body, opts] = axiosPost.mock.calls[0]!;
-    const originalSignature: string = opts.headers['X-Nodal-Signature'];
+    const originalSignature: string = opts.headers['X-Ledgera-Signature'];
 
     // Simulate a man-in-the-middle modifying the payload after signing
     const tampered = body.replace(/"success":true/, '"success":false');
@@ -406,7 +406,7 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
     await dispatchWebhook(successResult);
 
     const [, body, opts] = axiosPost.mock.calls[0]!;
-    const signature: string = opts.headers['X-Nodal-Signature'];
+    const signature: string = opts.headers['X-Ledgera-Signature'];
 
     // Flip one character anywhere in the body
     const idx = Math.floor(body.length / 2);
@@ -419,7 +419,7 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
     await dispatchWebhook(successResult);
 
     const [, body, opts] = axiosPost.mock.calls[0]!;
-    const signature: string = opts.headers['X-Nodal-Signature'];
+    const signature: string = opts.headers['X-Ledgera-Signature'];
 
     // Attacker has wrong secret — verification must fail
     expect(verifySignature(body, 'wrong-secret', signature)).toBe(false);
@@ -429,7 +429,7 @@ describe('dispatchWebhook — HMAC signature verification (issue #448)', () => {
     await dispatchWebhook(successResult);
 
     const [, , opts] = axiosPost.mock.calls[0]!;
-    const signature: string = opts.headers['X-Nodal-Signature'];
+    const signature: string = opts.headers['X-Ledgera-Signature'];
 
     expect(verifySignature('', SECRET, signature)).toBe(false);
   });

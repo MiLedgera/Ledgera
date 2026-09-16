@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature or improvement for Nodal AI
+about: Suggest a new feature or improvement for Ledgera
 title: "[FEATURE] "
 labels: enhancement
 assignees: ''

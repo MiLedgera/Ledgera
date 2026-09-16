@@ -1,9 +1,9 @@
 # =============================================================================
-# Nodal AI — Docker Compose stack
+# Ledgera — Docker Compose stack
 #
 # Services:
 #   stellar-quickstart  — local Stellar network (Horizon + Soroban RPC)
-#   agent               — Nodal AI backend (connects to quickstart)
+#   agent               — Ledgera backend (connects to quickstart)
 #   test-runner         — full-stack integration tests (profile: test)
 #   test-runner-only    — tests against quickstart only, no agent (profile: test-only)
 #
@@ -23,7 +23,7 @@ services:
   # ── Local Stellar network ────────────────────────────────────────────────────
   stellar-quickstart:
     image: stellar/quickstart:latest
-    container_name: nodal-stellar
+    container_name: ledgera-stellar
     platform: linux/amd64        # quickstart only ships amd64
     ports:
       - "8000:8000"              # Horizon REST API
@@ -41,15 +41,15 @@ services:
       retries: 12
       start_period: 30s
     networks:
-      - nodal-net
+      - ledgera-net
 
-  # ── Nodal AI agent ───────────────────────────────────────────────────────────
+  # ── Ledgera agent ───────────────────────────────────────────────────────────
   agent:
     build:
       context: .
       dockerfile: Dockerfile
       target: production
-    container_name: nodal-agent
+    container_name: ledgera-agent
     depends_on:
       stellar-quickstart:
         condition: service_healthy
@@ -82,7 +82,7 @@ services:
       - NET_BIND_SERVICE
     restart: unless-stopped
     networks:
-      - nodal-net
+      - ledgera-net
     # Mount WASM contract at runtime (optional: already baked into image)
     # volumes:
     #   - ./contracts/escrow:/app/contracts/escrow:ro
@@ -93,7 +93,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: node-builder      # has devDeps + source
-    container_name: nodal-test-runner
+    container_name: ledgera-test-runner
     profiles:
       - test                    # only starts with: docker compose --profile test up
     depends_on:
@@ -114,7 +114,7 @@ services:
     command: npm run test:ts
     restart: "no"
     networks:
-      - nodal-net
+      - ledgera-net
 
   # ── Test-only runner (no agent HTTP server) ─────────────────────────────────
   # Starts just stellar-quickstart + this container — skips building/booting the
@@ -124,7 +124,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: node-builder      # has devDeps + source
-    container_name: nodal-test-runner-only
+    container_name: ledgera-test-runner-only
     profiles:
       - test-only              # only starts with: docker compose --profile test-only up
     depends_on:
@@ -143,8 +143,8 @@ services:
     command: npm run test:ts
     restart: "no"
     networks:
-      - nodal-net
+      - ledgera-net
 
 networks:
-  nodal-net:
+  ledgera-net:
     driver: bridge

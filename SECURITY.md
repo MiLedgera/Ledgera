@@ -29,7 +29,7 @@ High and Critical findings are not accepted as routine CI noise. If remediation 
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Use [GitHub Private Security Advisories](https://github.com/Nodal-stellar/Nodal-AI/security/advisories/new) to report vulnerabilities confidentially. This keeps details private until a fix is released.
+Use [GitHub Private Security Advisories](https://github.com/MiLedgera/Ledgera/security/advisories/new) to report vulnerabilities confidentially. This keeps details private until a fix is released.
 
 ### Response SLA
 
@@ -252,11 +252,11 @@ console.log('✅ Old signer removed:', txResult.id);
 
 ## Known Limitations
 
-Users should be aware of the following limitations when deploying Nodal AI:
+Users should be aware of the following limitations when deploying Ledgera:
 
-### 1. In-Memory Nonce Store
+### 1. Nonce Store Is Not Shared Across Horizontally-Scaled Instances
 
-The x402 nonce store is in-memory and not persisted to disk. If the agent process restarts, previously-seen nonces are cleared. This creates a window where replayed x402 challenges could be accepted until the agent is re-initialized with fresh state. See [#207](https://github.com/Nodal-stellar/Nodal-AI/issues/207) for persistent nonce store implementation.
+`X402PaymentTool` defaults to `SqliteNonceStore` (`backend/nonce_store.ts`), which persists used x402 nonces to the same SQLite database as `DB_PATH` and survives process restarts on a single instance. It is **not** shared across multiple concurrently-running agent instances (e.g. behind a load balancer) unless they point at the same database file — each instance's replay protection is otherwise independent. For horizontal scale-out, inject a custom `INonceStore` backed by a shared store (Redis, DynamoDB, etc.) via the `X402PaymentTool` constructor. `InMemoryNonceStore` exists only for unit tests and is never used by default.
 
 ### 2. Soroban Simulation Disabled for Payment Estimates
 
@@ -264,7 +264,7 @@ The x402 nonce store is in-memory and not persisted to disk. If the agent proces
 
 ### 3. AWS Secret Fetch Pattern
 
-`config.ts` uses `execSync` to fetch `AGENT_SECRET_KEY` from AWS Secrets Manager. This pattern has inherent security risks including exposing command output in error logs and blocking the event loop during secret retrieval. See [#210](https://github.com/Nodal-stellar/Nodal-AI/issues/210) for a planned non-blocking alternative.
+`config.ts` fetches `AGENT_SECRET_KEY` from AWS Secrets Manager via the `@aws-sdk/client-secrets-manager` `SecretsManagerClient`/`GetSecretValueCommand` API (not a shell-out) when `AGENT_SECRET_KEY_ARN` is configured. The fetch runs once at startup, before any tool code executes, and its result is never logged or included in error messages — only structural configuration errors are reported (see [Secret Management](#secret-management-the-agentkeypair-closure) above).
 
 ### 4. Webhook Delivery Retry Limits
 

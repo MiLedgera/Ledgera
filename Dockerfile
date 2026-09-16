@@ -1,5 +1,5 @@
 # =============================================================================
-# Nodal AI — Multi-stage Dockerfile
+# Ledgera — Multi-stage Dockerfile
 #
 # Stages:
 #   1. rust-builder   — compiles Soroban contract → .wasm
@@ -79,7 +79,7 @@ RUN npm ci --omit=dev --ignore-scripts && \
 # ─── Stage 4: Production image ────────────────────────────────────────────────
 FROM node:20-alpine AS production
 
-LABEL org.opencontainers.image.title="Nodal AI Agent"
+LABEL org.opencontainers.image.title="Ledgera Agent"
 LABEL org.opencontainers.image.description="Stellar PayFi Agent Kit"
 
 # Non-root user for security (Alpine/busybox adduser syntax)

@@ -1,25 +1,25 @@
-# Nodal AI
+# Ledgera
 
-[![CI](https://github.com/Nodal-stellar/Nodal-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Nodal-stellar/Nodal-AI/actions/workflows/ci.yml)
+[![CI](https://github.com/MiLedgera/Ledgera/actions/workflows/ci.yml/badge.svg)](https://github.com/MiLedgera/Ledgera/actions/workflows/ci.yml)
 **Modular, production-ready Agent Kit for autonomous PayFi (Payment-Finance) flows on the Stellar Network.**
 
-Nodal AI empowers developers to build autonomous agents capable of handling complex financial interactions. Whether you’re automating cross-border settlements, building machine-to-machine payment gateways, or orchestrating smart contract executions, Nodal AI provides the primitives to do it securely and efficiently on Stellar.
+Ledgera empowers developers to build autonomous agents capable of handling complex financial interactions. Whether you’re automating cross-border settlements, building machine-to-machine payment gateways, or orchestrating smart contract executions, Ledgera provides the primitives to do it securely and efficiently on Stellar.
 
 ---
 
-## Why Nodal AI?
+## Why Ledgera?
 
-In the era of **PayFi**, payments are no longer just passive transfers they are programmable, autonomous, and integrated into the global financial fabric. Nodal AI bridges the gap between AI reasoning and Stellar's high-speed, low-cost network.
+In the era of **PayFi**, payments are no longer just passive transfers they are programmable, autonomous, and integrated into the global financial fabric. Ledgera bridges the gap between AI reasoning and Stellar's high-speed, low-cost network.
 
 - **Autonomous PayFi:** Built-in support for the `x402` payment standard, enabling seamless machine-to-machine value exchange.
 - **Modular Architecture:** Swap in new tools, chain actions, and orchestrate complex workflows without touching core signing logic.
-- **Safety-First Design:** Every transaction is simulated via Soroban RPC before broadcast, and all secrets remain strictly externalized.
+- **Safety-First Design:** Every Soroban smart-contract transaction is simulated via Soroban RPC before broadcast (Horizon Classic operations like native payments have no simulation endpoint to run against), and all secrets remain strictly externalized.
 
 ---
 
 ## Architecture
 
-Nodal AI is built on a clean, three-pillar separation of concerns. For a deep dive into the system design, tool dispatch, simulation gates, and state machines, please read the [Architecture Guide](./ARCHITECTURE.md).
+Ledgera is built on a clean, three-pillar separation of concerns. For a deep dive into the system design, tool dispatch, simulation gates, and state machines, please read the [Architecture Guide](./ARCHITECTURE.md).
 
 If you are new to the Stellar-specific terms used throughout the repo, see the [Glossary](./GLOSSARY.md).
 
@@ -38,8 +38,8 @@ If you are new to the Stellar-specific terms used throughout the repo, see the [
 1. **Clone & Configure:**
 
    ```bash
-   git clone https://github.com/Nodal-stellar/Nodal-AI.git
-   cd nodal-ai
+   git clone https://github.com/MiLedgera/Ledgera.git
+   cd Ledgera
    cp .env.example .env
    ```
 
@@ -84,11 +84,11 @@ We use `Vitest` to ensure the entire flow—from AI reasoning to network settlem
 
 ## Docker
 
-Nodal AI includes a multi-stage Dockerfile and Docker Compose stack for local development, testing, and deployment.
+Ledgera includes a multi-stage Dockerfile and Docker Compose stack for local development, testing, and deployment.
 
 ### Running with Docker Compose
 
-1. **Start the local Stellar network and Nodal agent:**
+1. **Start the local Stellar network and Ledgera agent:**
 
    ```bash
    docker-compose up --build
@@ -125,7 +125,7 @@ docker-compose --profile test-only up --build --abort-on-container-exit --exit-c
 
 ## Development Environment (Devcontainer & Codespaces)
 
-For zero-setup provisioning, Nodal AI ships a [VS Code Dev Container](https://containers.dev/) configuration in [`.devcontainer/`](./.devcontainer/devcontainer.json). It gives you Node 20, the Rust toolchain (with the `wasm32-unknown-unknown` target), and the Stellar CLI, pre-installed, with no local setup required.
+For zero-setup provisioning, Ledgera ships a [VS Code Dev Container](https://containers.dev/) configuration in [`.devcontainer/`](./.devcontainer/devcontainer.json). It gives you Node 20, the Rust toolchain (with the `wasm32-unknown-unknown` target), and the Stellar CLI, pre-installed, with no local setup required.
 
 **Using VS Code:**
 
@@ -145,7 +145,7 @@ The container forwards port `3000` and preinstalls `dbaeumer.vscode-eslint`, `es
 
 Security is the foundation of PayFi. See [SECURITY.md](./SECURITY.md) for the full responsible disclosure policy, response SLAs, core security invariants, and secret management guidelines.
 
-To report a vulnerability privately, use [GitHub Security Advisories](https://github.com/Nodal-stellar/Nodal-AI/security/advisories/new).
+To report a vulnerability privately, use [GitHub Security Advisories](https://github.com/MiLedgera/Ledgera/security/advisories/new).
 
 ### Spending Limit Enforcement
 
@@ -176,7 +176,7 @@ All four checks are enforced at startup via `backend/config.ts` validation and a
 
 We are actively participating in the **Stellar Wave** program! We welcome contributions ranging from bug fixes to new tool modules.
 
-1.  Check the [Issues](https://github.com/Nodal-stellar/Nodal-AI/issues) tab for tickets tagged `good first issue` or `help wanted`.
+1.  Check the [Issues](https://github.com/MiLedgera/Ledgera/issues) tab for tickets tagged `good first issue` or `help wanted`.
 2.  Follow the [CONTRIBUTING.md](./CONTRIBUTING.md) guide.
 3.  Submit a Pull Request and join our community in the next Wave sprint to earn Drips points for your contributions!
 
@@ -299,7 +299,7 @@ Released under the [MIT License](LICENSE).
 
 _Built for the Stellar ecosystem by [Dami24-hub]._
 
-````
+---
 
 ## API Reference
 
@@ -315,11 +315,11 @@ The primary integration surface for developers. Dispatch tasks to the agent via 
 
 ### TaskType
 
-```typescript
-type TaskType = "stellar_payment" | "soroban_invoke" | "x402_respond" | "path_payment" | "fee_bump" | "account_info"
-```
+`TaskType` is a string union with one member per dispatchable task. The authoritative list is the `TaskType` union in [`backend/agent.ts`](./backend/agent.ts) — copying it here as prose has drifted out of sync before, so this section intentionally doesn't re-list every value. Any string not in the union throws `"Unknown task type: <value>"` immediately at dispatch time, before any tool runs.
 
-All three values are wired into `PayFiAgent.run()` in `backend/agent.ts`. Any unrecognised type throws `"Unknown task type: <value>"` immediately at dispatch time.
+For the complete table of every `TaskType` value, its handling tool class, and a description, see [ARCHITECTURE.md § Registered Task Types](./ARCHITECTURE.md#registered-task-types) — that table is generated by reading the same switch statement in `agent.ts` and is kept in sync with it.
+
+A representative sample:
 
 | Value | Tool | Description |
 |-------|------|-------------|
@@ -328,14 +328,6 @@ All three values are wired into `PayFiAgent.run()` in `backend/agent.ts`. Any un
 | `x402_respond` | `X402PaymentTool` | Respond to an [x402](https://github.com/x402-foundation/x402) `402 Payment Required` challenge. Validates the challenge schema, enforces spending limits, delegates to `StellarPaymentTool`, and returns an `X402PaymentProof`. |
 
 > **Standalone utilities:** `BalanceCheckTool` (`backend/tools/BalanceCheckTool.ts`) and `SorobanQueryTool` (`backend/tools/SorobanQueryTool.ts`) are importable directly and are not dispatched through `PayFiAgent.run()`. Use them outside the agent task loop when you only need a read-only query.
-| Value | Description |
-|-------|-------------|
-| `stellar_payment` | Native XLM or custom asset payment via Horizon |
-| `soroban_invoke` | Smart contract invocation via Soroban RPC with simulation |
-| `x402_respond` | Respond to an x402 payment challenge with spending limit guard |
-| `path_payment` | Cross-asset path payment strict send via the Stellar DEX |
-| `fee_bump` | Wrap an existing transaction in a fee-bump envelope for sponsored retry |
-| `account_info` | Fetch the agent's account balances, sequence number, and trustlines from Horizon |
 
 ### AgentTask
 
@@ -343,23 +335,15 @@ All three values are wired into `PayFiAgent.run()` in `backend/agent.ts`. Any un
 interface AgentTask {
   type: TaskType;
   payload: unknown;
+  correlationId?: string;
 }
 ```
 
-Input wrapper for task dispatch. The `payload` shape depends on `type`:
+Input wrapper for task dispatch. Each tool validates its own `payload` shape with a Zod schema at execution time (see e.g. `PaymentInputSchema` in `backend/tools/StellarPaymentTool.ts`) — those schemas, not this README, are the source of truth for exact field names and types. A few illustrative examples:
 - `stellar_payment`: `{ destination: string; amount: string; assetCode?: string; assetIssuer?: string; memo?: string }`
-- `soroban_invoke`: `{ contractId: string; method: string; args: SorobanValue[]; simulateOnly?: boolean; ... }`
+- `soroban_invoke`: `{ contractId: string; method: string; args: xdr.ScVal[]; simulateOnly?: boolean }`
 - `x402_respond`: `{ resource: string; amount: string; assetCode?: string; assetIssuer?: string; payTo: string; nonce: string; expiresAt: string }`
-- `change_trust`: `{ assetCode: string; assetIssuer: string; action: "add" | "remove"; limit?: string }`
-- `batch_payment`: `{ payments: PaymentInput[] }` (max 100 payments; aggregate spending limit enforced)
-- `multisig_payment`: `{ destination: string; amount: string; assetCode?: string; assetIssuer?: string; memo?: string; additionalSigners: string[]; minSignatures: number; signatures?: string[] }`
-- `dex_offer`: `{ action: "create" | "update" | "delete"; selling: Asset; buying: Asset; amount: string; price: string; offerId?: string | number }`
-- `path_payment`: `{ destination: string; sendAsset: Asset; sendMax: string; destAsset: Asset; destAmount: string; ... }`
-- `fee_bump`: `{ innerTx: string; feeAccount: string; maxFee: string }`
-- `account_info`: `{ publicKey?: string }`
-- `inflation`: `{ action: "set"; inflationDestination: string }` or `{ action: "get"; accountId?: string }` — set or query the account's inflation destination
-- `balance_check`: `{ assetCode: string; assetIssuer?: string; publicKey?: string }`
-- `soroban_query`: `{ contractId: string; method: string; args: SorobanValue[] }`
+- `batch_payment`: `{ payments: PaymentInput[]; failFast?: boolean }` (max 100 payments; aggregate spending limit enforced)
 
 ### AgentResult
 
@@ -421,7 +405,7 @@ agent.destroy();
 
 ## x402 Payment Flow
 
-Nodal AI implements the [x402](https://github.com/x402-foundation/x402) protocol so the agent can pay for gated resources autonomously. The verified flow below covers what happens once `PayFiAgent.run()` is dispatched an `x402_respond` task — the upstream step of a resource server actually issuing the 402 challenge happens outside this codebase (in whatever client first calls `PayFiAgent.run()`), so it's described in prose rather than diagrammed.
+Ledgera implements the [x402](https://github.com/x402-foundation/x402) protocol so the agent can pay for gated resources autonomously. The verified flow below covers what happens once `PayFiAgent.run()` is dispatched an `x402_respond` task — the upstream step of a resource server actually issuing the 402 challenge happens outside this codebase (in whatever client first calls `PayFiAgent.run()`), so it's described in prose rather than diagrammed.
 
 ```mermaid
 sequenceDiagram
@@ -493,7 +477,7 @@ interface X402PaymentProof {
 
 The proof carries no embedded signature of its own. Verification is delegated to whatever consumes the proof: it looks up `txHash` on Horizon and confirms the payment's destination, amount, and memo match what the original challenge demanded. The proof is a pointer to on-chain truth, not a self-contained credential.
 
-One thing to flag for reviewers: `StellarPaymentTool.execute()` does **not** run a Soroban simulation pass before submission — its own comments note that Horizon has no simulation endpoint, so it validates the transaction envelope locally, signs, and submits directly. Simulation-before-broadcast is real elsewhere in this codebase (`SorobanInvokeTool`), but not on this payment path — worth keeping the README's general security claims scoped accordingly if they currently imply otherwise project-wide.
+Note that `StellarPaymentTool.execute()` — and therefore `x402_respond`, which delegates to it — does **not** run a Soroban simulation pass before submission: Horizon has no simulation endpoint, so the tool validates the transaction envelope locally, signs, and submits directly. Simulation-before-broadcast (see [ARCHITECTURE.md § The Mandatory Simulation Gate](./ARCHITECTURE.md#the-mandatory-simulation-gate)) applies to the Soroban RPC path (`soroban_invoke`, `soroban_query`, `soroban_deploy`), not to Horizon Classic operations like this one.
 
 ### Minimal usage example
 

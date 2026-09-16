@@ -26,6 +26,11 @@ import { AccountInfoTool } from '../backend/tools/AccountInfoTool';
 import { TrustlineTool } from '../backend/tools/TrustlineTool';
 import { MultiSigPaymentTool } from '../backend/tools/MultiSigPaymentTool';
 import { BatchPaymentTool } from '../backend/tools/BatchPaymentTool';
+import { ClaimableBalanceTool } from '../backend/tools/ClaimableBalanceTool';
+import { SetOptionsTool } from '../backend/tools/SetOptionsTool';
+import { SorobanEventIndexerTool } from '../backend/tools/SorobanEventIndexerTool';
+import { StellarIdentityTool } from '../backend/tools/StellarIdentityTool';
+import { BalanceStreamTool } from '../backend/tools/BalanceStreamTool';
 import { ValidationError, UnauthorizedError, ErrorType } from '../backend/errors';
 
 vi.mock('../backend/tools/StellarPaymentTool', () => ({
@@ -149,6 +154,43 @@ vi.mock('../backend/tools/InflationTool', () => ({
 vi.mock('../backend/tools/ContractEventListener', () => ({
   listen: vi.fn().mockReturnValue(() => {}),
 }));
+
+vi.mock('../backend/tools/ClaimableBalanceTool', () => ({
+  ClaimableBalanceTool: vi.fn().mockImplementation(() => ({
+    execute: vi.fn().mockResolvedValue({ txHash: 'claimable_mock_hash', ledger: 1 }),
+  })),
+}));
+
+vi.mock('../backend/tools/SetOptionsTool', () => ({
+  SetOptionsTool: vi.fn().mockImplementation(() => ({
+    execute: vi.fn().mockResolvedValue({ txHash: 'set_options_mock_hash', ledger: 1 }),
+  })),
+}));
+
+vi.mock('../backend/tools/SorobanEventIndexerTool', () => ({
+  SorobanEventIndexerTool: vi.fn().mockImplementation(() => ({
+    query: vi.fn().mockResolvedValue({ events: [], latestLedger: 100 }),
+  })),
+}));
+
+vi.mock('../backend/tools/StellarIdentityTool', () => ({
+  StellarIdentityTool: vi.fn().mockImplementation(() => ({
+    execute: vi.fn().mockResolvedValue({ token: 'mock_jwt_token' }),
+  })),
+}));
+
+vi.mock('../backend/tools/BalanceStreamTool', () => {
+  const { EventEmitter } = require('events');
+  return {
+    BalanceStreamTool: vi.fn().mockImplementation(() => {
+      const emitter = new EventEmitter();
+      return {
+        subscribe: vi.fn().mockReturnValue(emitter),
+        stop: vi.fn(),
+      };
+    }),
+  };
+});
 
 vi.mock('../backend/webhook', () => ({
   dispatchWebhook: vi.fn().mockResolvedValue(undefined),
@@ -499,6 +541,325 @@ describe('PayFiAgent — mainnet spending cap', () => {
   });
 });
 
+// Audit finding S-1: assertWithinSpendingLimit (and thus MAINNET_SPENDING_CAP)
+// was previously enforced for only stellar_payment/x402_respond, leaving every
+// other value-moving task type free to move unbounded amounts on mainnet.
+// These tests pin the fix — each task type below must reject an amount above
+// MAINNET_SPENDING_CAP (10_000, mocked above) before ever reaching its tool.
+describe('PayFiAgent — spending-limit enforcement across all money-moving task types (audit S-1)', () => {
+  let agent: PayFiAgent;
+
+  beforeEach(() => {
+    spendingTracker.clear();
+    // vitest.config.ts sets restoreMocks: true, which resets every vi.fn()
+    // (including the mockImplementation set inside each vi.mock() factory)
+    // after every test — so any tool actually reached (i.e. not blocked by
+    // the spending guard) needs its mock re-applied here, same as the
+    // "task dispatch matrix" describe block below.
+    vi.mocked(MultiSigPaymentTool).mockImplementation(
+      () =>
+        ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_multisig_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(BatchPaymentTool).mockImplementation(
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({ txHash: 's1_batch_hash', ledger: 1, skipped: 0 }),
+        }) as any
+    );
+    vi.mocked(PathPaymentTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_path_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(DexOfferTool).mockImplementation(
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({ txHash: 's1_dex_hash', ledger: 1, offerId: '42' }),
+        }) as any
+    );
+    vi.mocked(LiquidityPoolTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ txHash: 's1_lp_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(SponsoredAccountTool).mockImplementation(
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({
+            txHash: 's1_sponsored_hash',
+            ledger: 1,
+            newAccountPublicKey: DEST,
+            startingBalance: '5',
+          }),
+        }) as any
+    );
+    agent = new PayFiAgent();
+  });
+
+  it('rejects a multisig_payment above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'multisig_payment',
+      payload: { destination: DEST, amount: '12000', additionalSigners: [], minSignatures: 1 },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a batch_payment whose aggregate exceeds MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'batch_payment',
+      payload: {
+        payments: [
+          { destination: DEST, amount: '6000', assetCode: 'USDC', assetIssuer: ISSUER },
+          { destination: DEST, amount: '6000', assetCode: 'USDC', assetIssuer: ISSUER },
+        ],
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a path_payment (sendAmount) above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'path_payment',
+      payload: {
+        destination: DEST,
+        sendAsset: { code: 'XLM' },
+        sendAmount: '11000',
+        destAsset: { code: 'USDC', issuer: ISSUER },
+        destMinAmount: '1',
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a swap (sellAmount) above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'swap',
+      payload: {
+        sellAsset: { code: 'XLM' },
+        buyAsset: { code: 'USDC', issuer: ISSUER },
+        sellAmount: '11000',
+        maxSlippagePct: 1,
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('rejects a dex_offer create above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'dex_offer',
+      payload: {
+        action: 'create',
+        selling: { code: 'XLM' },
+        buying: { code: 'USDC', issuer: ISSUER },
+        amount: '11000',
+        price: '1',
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('does not apply the cap to a dex_offer delete (amount is forced to 0 on-chain)', async () => {
+    const result = await agent.run({
+      type: 'dex_offer',
+      payload: {
+        action: 'delete',
+        selling: { code: 'XLM' },
+        buying: { code: 'USDC', issuer: ISSUER },
+        amount: '11000',
+        price: '1',
+        offerId: '42',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a liquidity_pool deposit above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'liquidity_pool',
+      payload: {
+        action: 'deposit',
+        liquidityPoolId: 'pool-1',
+        maxAmountA: '11000',
+        maxAmountB: '100',
+        minPrice: '0.1',
+        maxPrice: '10',
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('does not apply the cap to a liquidity_pool withdraw (funds return to the agent)', async () => {
+    const result = await agent.run({
+      type: 'liquidity_pool',
+      payload: {
+        action: 'withdraw',
+        liquidityPoolId: 'pool-1',
+        amount: '11000',
+        minAmountA: '1',
+        minAmountB: '1',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a sponsored_account startingBalance above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'sponsored_account',
+      payload: { newAccountPublicKey: DEST, startingBalance: '11000' },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('accepts each task type at an amount within the cap', async () => {
+    const cases: Array<{ type: TaskType; payload: unknown }> = [
+      {
+        type: 'multisig_payment',
+        payload: { destination: DEST, amount: '100', additionalSigners: [], minSignatures: 1 },
+      },
+      {
+        type: 'path_payment',
+        payload: {
+          destination: DEST,
+          sendAsset: { code: 'XLM' },
+          sendAmount: '100',
+          destAsset: { code: 'USDC', issuer: ISSUER },
+          destMinAmount: '1',
+        },
+      },
+      {
+        type: 'sponsored_account',
+        payload: { newAccountPublicKey: DEST, startingBalance: '5' },
+      },
+    ];
+
+    for (const { type, payload } of cases) {
+      const result = await agent.run({ type, payload });
+      expect(result.success).toBe(true);
+    }
+  });
+});
+
+// Audit finding Q-1: ClaimableBalanceTool, SetOptionsTool, SorobanEventIndexerTool,
+// StellarIdentityTool, and BalanceStreamTool were fully implemented and tested in
+// isolation but never wired into PayFiAgent's dispatch, making them dead code in
+// the running application. These tests pin the wiring now that it exists.
+describe('PayFiAgent — newly wired tools (audit Q-1)', () => {
+  let agent: PayFiAgent;
+
+  beforeEach(() => {
+    spendingTracker.clear();
+    vi.mocked(ClaimableBalanceTool).mockImplementation(
+      () =>
+        ({ execute: vi.fn().mockResolvedValue({ txHash: 'q1_claimable_hash', ledger: 1 }) }) as any
+    );
+    vi.mocked(SetOptionsTool).mockImplementation(
+      () =>
+        ({
+          execute: vi.fn().mockResolvedValue({ txHash: 'q1_set_options_hash', ledger: 1 }),
+        }) as any
+    );
+    vi.mocked(SorobanEventIndexerTool).mockImplementation(
+      () => ({ query: vi.fn().mockResolvedValue({ events: [], latestLedger: 42 }) }) as any
+    );
+    vi.mocked(StellarIdentityTool).mockImplementation(
+      () => ({ execute: vi.fn().mockResolvedValue({ token: 'q1_mock_jwt' }) }) as any
+    );
+    vi.mocked(BalanceStreamTool).mockImplementation(
+      () =>
+        ({
+          subscribe: vi.fn().mockReturnValue(new (require('events').EventEmitter)()),
+          stop: vi.fn(),
+        }) as any
+    );
+    agent = new PayFiAgent();
+  });
+
+  it('dispatches claimable_balance (create) and returns success', async () => {
+    const result = await agent.run({
+      type: 'claimable_balance',
+      payload: {
+        action: 'create',
+        assetCode: 'XLM',
+        amount: '10',
+        claimants: [{ destination: DEST }],
+      },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.txHash).toBe('q1_claimable_hash');
+  });
+
+  it('rejects a claimable_balance create above MAINNET_SPENDING_CAP', async () => {
+    const result = await agent.run({
+      type: 'claimable_balance',
+      payload: {
+        action: 'create',
+        assetCode: 'XLM',
+        amount: '11000',
+        claimants: [{ destination: DEST }],
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/mainnet spending cap/);
+  });
+
+  it('does not apply the cap to a claimable_balance claim (no funds committed)', async () => {
+    const result = await agent.run({
+      type: 'claimable_balance',
+      payload: { action: 'claim', balanceId: 'balance-1' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('dispatches set_options and returns success', async () => {
+    const result = await agent.run({
+      type: 'set_options',
+      payload: { homeDomain: 'example.com' },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.txHash).toBe('q1_set_options_hash');
+  });
+
+  it('dispatches soroban_events and returns success', async () => {
+    const result = await agent.run({
+      type: 'soroban_events',
+      payload: {
+        contractId: 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+        fromLedger: 1,
+        toLedger: 100,
+      },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.latestLedger).toBe(42);
+  });
+
+  it('dispatches web_auth and returns success', async () => {
+    const result = await agent.run({
+      type: 'web_auth',
+      payload: { anchorUrl: 'https://anchor.example.com' },
+    });
+    expect(result.success).toBe(true);
+    expect((result.data as any)?.token).toBe('q1_mock_jwt');
+  });
+
+  it('startBalanceStream subscribes and forwards balance events; stopBalanceStream stops it', () => {
+    const events: unknown[] = [];
+    agent.startBalanceStream(DEST, (event) => events.push(event));
+
+    const mockInstance = vi.mocked(BalanceStreamTool).mock.results[0]!.value;
+    expect(mockInstance.subscribe).toHaveBeenCalledWith(DEST);
+
+    const emitter = mockInstance.subscribe.mock.results[0]!.value;
+    emitter.emit('balance', { assetCode: 'XLM', amount: '5', direction: 'credit' });
+    expect(events).toEqual([{ assetCode: 'XLM', amount: '5', direction: 'credit' }]);
+
+    agent.stopBalanceStream();
+    expect(mockInstance.stop).toHaveBeenCalled();
+  });
+});
+
 describe('AgentResult snapshot', () => {
   let agent: PayFiAgent;
 
@@ -604,6 +965,9 @@ describe('PayFiAgent — new task types', () => {
         ({
           execute: vi.fn().mockResolvedValue({ txHash: 'dex_mock_hash', ledger: 1, offerId: '0' }),
         }) as any
+    );
+    vi.mocked(BalanceStreamTool).mockImplementation(
+      () => ({ subscribe: vi.fn(), stop: vi.fn() }) as any
     );
     agent = new PayFiAgent();
   });

@@ -6,7 +6,7 @@
  */
 
 import { createLogger } from '../utils/logger';
-import { probeDb } from '../persistence';
+import { probeDb, closeDb } from '../persistence';
 
 const log = createLogger('database');
 
@@ -50,6 +50,7 @@ export class DatabaseManager {
   /** Flush pending writes and release the connection. */
   async close(): Promise<void> {
     this._isOpen = false;
+    closeDb();
     log.info({ msg: 'Database connection closed' });
   }
 }

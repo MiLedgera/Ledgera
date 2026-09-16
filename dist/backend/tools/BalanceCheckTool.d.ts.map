@@ -1,1 +1,0 @@
-{"version":3,"file":"BalanceCheckTool.d.ts","sourceRoot":"","sources":["../../../backend/tools/BalanceCheckTool.ts"],"names":[],"mappings":"AACA,OAAO,EAAE,CAAC,EAAE,MAAM,KAAK,CAAC;AAUxB,eAAO,MAAM,uBAAuB;;;;;;;;;;;;EASlC,CAAC;AAEH,MAAM,MAAM,iBAAiB,GAAG,CAAC,CAAC,KAAK,CAAC,OAAO,uBAAuB,CAAC,CAAC;AAExE,qBAAa,gBAAgB;IACrB,OAAO,CAAC,QAAQ,EAAE,OAAO,GAAG,OAAO,CAAC,MAAM,CAAC;CAclD"}

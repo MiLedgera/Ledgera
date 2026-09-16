@@ -4,7 +4,7 @@
   "entryPointStrategy": "expand",
   "out": "docs/api",
   "tsconfig": "tsconfig.json",
-  "name": "Nodal AI — API Reference",
+  "name": "Ledgera — API Reference",
   "includeVersion": true,
   "readme": "README.md",
   "excludePrivate": true,

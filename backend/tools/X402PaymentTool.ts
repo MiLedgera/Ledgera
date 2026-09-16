@@ -10,7 +10,6 @@ import Database from 'better-sqlite3';
 import { config } from '../config';
 import { horizonServer } from '../rpc_client';
 import { StellarPaymentTool } from './StellarPaymentTool';
-import { buildMemo } from './MemoAttachmentTool';
 import { logger } from '../logger';
 import { INonceStore, SqliteNonceStore, MAX_NONCE_TTL_MS } from '../nonce_store';
 import { TransactionFailureError } from '../errors';
@@ -162,10 +161,9 @@ export class X402PaymentTool {
         assetCode: challenge.assetCode,
         assetIssuer: challenge.assetCode === 'XLM' ? undefined : challenge.assetIssuer,
         // SPEC: memo = SHA-256(nonce)[0:28 hex chars]; resource server must apply the same derivation to verify.
-        memo: buildMemo({
-          type: 'MEMO_TEXT',
-          value: createHash('sha256').update(challenge.nonce).digest('hex').slice(0, 28),
-        }).value as string,
+        // StellarPaymentTool.execute() validates and builds the Memo itself from this
+        // string — no need to build one here just to unwrap it back to a string.
+        memo: createHash('sha256').update(challenge.nonce).digest('hex').slice(0, 28),
       }));
     } catch (err) {
       // #371: preserve the Horizon result code (e.g. op_underfunded, op_no_trust)

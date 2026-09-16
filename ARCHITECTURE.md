@@ -1,12 +1,12 @@
-# Nodal AI System Architecture
+# Ledgera System Architecture
 
-This document provides a deep dive into the architecture of Nodal AI, explaining the core components, transaction lifecycles, security gates, and tool dispatch flows.
+This document provides a deep dive into the architecture of Ledgera, explaining the core components, transaction lifecycles, security gates, and tool dispatch flows.
 
 ---
 
 ## Directory Structure Rationale
 
-Nodal AI is structured into three clean pillars to isolate concerns, simplify development, and optimize security:
+Ledgera is structured into three clean pillars to isolate concerns, simplify development, and optimize security:
 
 ```text
 /
@@ -199,6 +199,13 @@ Every `TaskType` value accepted by `PayFiAgent.run()` is listed below, together 
 | `sponsored_account` | `SponsoredAccountTool` | Create a new Stellar account with sponsored reserves. |
 | `anchor_quote` | `AnchorQuoteTool` | Fetch an SEP-38 quote from an anchor for asset conversion. |
 | `inflation` | `InflationTool` | Set or query the account's inflation destination. |
+| `soroban_deploy` | `SorobanDeployTool` | Upload WASM bytecode and/or instantiate a Soroban contract (`upload` \| `instantiate` \| `deploy`). Goes through the same mandatory simulation gate as `soroban_invoke`. |
+| `swap` | `SwapTool` | Atomic DEX swap: finds the best strict-send path via Horizon and submits it through `PathPaymentTool`. |
+| `account_history` | `AccountHistoryTool` | Fetch the agent's (or any account's) payment/operation history from Horizon. Read-only. |
+| `claimable_balance` | `ClaimableBalanceTool` | Create a claimable balance for one or more claimants, or claim one the agent is a claimant of. Spending limit enforced on `create`; not on `claim` (returns funds to the agent). |
+| `set_options` | `SetOptionsTool` | Manage account flags, signer thresholds, and home domain via `SET_OPTIONS`. |
+| `soroban_events` | `SorobanEventIndexerTool` | Query historical Soroban contract events over a ledger range. Read-only. |
+| `web_auth` | `StellarIdentityTool` | Complete a SEP-0010 web-auth challenge-response with an anchor and return the resulting JWT. |
 
 ### Lifecycle Hooks
 
@@ -280,7 +287,7 @@ The smart contract in [contracts/escrow/src/lib.rs](./contracts/escrow/src/lib.r
 
 ## x402 Challenge-Response Flow
 
-Nodal AI implements the `x402` payment protocol via `X402PaymentTool.ts` to allow autonomous payment responses for gated resource challenges:
+Ledgera implements the `x402` payment protocol via `X402PaymentTool.ts` to allow autonomous payment responses for gated resource challenges:
 
 ```mermaid
 sequenceDiagram

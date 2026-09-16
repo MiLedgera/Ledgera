@@ -73,6 +73,10 @@ export class MultiSigPaymentTool {
     }
     const input = parsed.data;
 
+    if (input.destination === this.keypair.publicKey()) {
+      throw new ValidationError("Payment destination cannot be the agent's own address");
+    }
+
     if (input.minSignatures > input.additionalSigners.length + 1) {
       throw new ValidationError(
         `minSignatures (${input.minSignatures}) exceeds total available signers (${input.additionalSigners.length + 1})`

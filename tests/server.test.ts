@@ -14,7 +14,7 @@
  *     the response shapes.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Mock modules before importing the module under test ──────────────────────
 
@@ -67,8 +67,12 @@ import { getResults } from '../backend/persistence';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeReq(method: string, url: string): http.IncomingMessage {
-  return { method, url } as http.IncomingMessage;
+function makeReq(
+  method: string,
+  url: string,
+  headers: Record<string, string> = {}
+): http.IncomingMessage {
+  return { method, url, headers } as http.IncomingMessage;
 }
 
 function makeRes(): http.ServerResponse & {
@@ -209,6 +213,76 @@ describe('backend/server.ts — health check HTTP server', () => {
       // The raw failure message is deliberately not echoed back: /status has no
       // auth guard, so an internal fault must not describe itself to callers.
       expect(res._body).not.toContain('Database unavailable');
+    });
+  });
+
+  // Audit finding S-2: /status returned recent AgentResult records
+  // (correlation IDs, error text, tool data) to any caller when WEBHOOK_SECRET
+  // was unset — the default. It now shares /spending's auth gate. Uses a
+  // dynamic import after setting process.env.WEBHOOK_SECRET because
+  // server.ts reads it into a module-level const at import time.
+  describe('GET /status — auth gate (audit S-2)', () => {
+    const ORIGINAL_SECRET = process.env.WEBHOOK_SECRET;
+
+    afterEach(() => {
+      if (ORIGINAL_SECRET === undefined) {
+        delete process.env.WEBHOOK_SECRET;
+      } else {
+        process.env.WEBHOOK_SECRET = ORIGINAL_SECRET;
+      }
+    });
+
+    it('returns 401 without a Bearer token when WEBHOOK_SECRET is configured', async () => {
+      process.env.WEBHOOK_SECRET = 'test-webhook-secret';
+      vi.resetModules();
+      const { createHealthServer: createAuthedServer } = await import('../backend/server');
+      createAuthedServer();
+      const req = makeReq('GET', '/status');
+      const res = makeRes();
+
+      capturedHandler!(req, res);
+
+      expect(res._statusCode).toBe(401);
+      expect(getResults).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 with the wrong Bearer token when WEBHOOK_SECRET is configured', async () => {
+      process.env.WEBHOOK_SECRET = 'test-webhook-secret';
+      vi.resetModules();
+      const { createHealthServer: createAuthedServer } = await import('../backend/server');
+      createAuthedServer();
+      const req = makeReq('GET', '/status', { authorization: 'Bearer wrong-secret' });
+      const res = makeRes();
+
+      capturedHandler!(req, res);
+
+      expect(res._statusCode).toBe(401);
+    });
+
+    it('returns 200 with the correct Bearer token when WEBHOOK_SECRET is configured', async () => {
+      process.env.WEBHOOK_SECRET = 'test-webhook-secret';
+      vi.resetModules();
+      const { createHealthServer: createAuthedServer } = await import('../backend/server');
+      createAuthedServer();
+      const req = makeReq('GET', '/status', { authorization: 'Bearer test-webhook-secret' });
+      const res = makeRes();
+
+      capturedHandler!(req, res);
+
+      expect(res._statusCode).toBe(200);
+    });
+
+    it('/health remains unauthenticated even when WEBHOOK_SECRET is configured', async () => {
+      process.env.WEBHOOK_SECRET = 'test-webhook-secret';
+      vi.resetModules();
+      const { createHealthServer: createAuthedServer } = await import('../backend/server');
+      createAuthedServer();
+      const req = makeReq('GET', '/health');
+      const res = makeRes();
+
+      capturedHandler!(req, res);
+
+      expect(res._statusCode).toBe(200);
     });
   });
 

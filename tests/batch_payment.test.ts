@@ -94,6 +94,25 @@ describe('BatchPaymentTool', () => {
     expect(rpcClient.submitTransaction).toHaveBeenCalledOnce();
   });
 
+  // Audit finding Q-5: StellarPaymentTool guards against paying the agent's
+  // own address; BatchPaymentTool previously had no equivalent per-payment check.
+  it("rejects a batch payment whose destination is the agent's own address (Q-5)", async () => {
+    const { Keypair } = await import('@stellar/stellar-sdk');
+    const ownPublicKey = Keypair.fromSecret(
+      'SADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP54X'
+    ).publicKey();
+
+    await expect(
+      tool.execute({
+        payments: [
+          { destination: DEST1, amount: '10', assetCode: 'XLM' },
+          { destination: ownPublicKey, amount: '10', assetCode: 'XLM' },
+        ],
+      })
+    ).rejects.toThrow(/own address/);
+    expect(rpcClient.submitTransaction).not.toHaveBeenCalled();
+  });
+
   it('rejects a batch with more than 100 payments', async () => {
     const payments = Array.from({ length: 101 }, (_, i) => ({
       destination: DEST1,

@@ -74,6 +74,25 @@ describe('MultiSigPaymentTool', () => {
     vi.mocked(rpcClient.loadAccount).mockResolvedValue(makeMockAccount() as any);
   });
 
+  // Audit finding Q-5: StellarPaymentTool/PathPaymentTool guard against paying
+  // the agent's own address; MultiSigPaymentTool previously had no equivalent
+  // check despite building the same kind of payment operation.
+  it("rejects a destination equal to the agent's own public key (Q-5)", async () => {
+    const { Keypair } = await import('@stellar/stellar-sdk');
+    const ownPublicKey = Keypair.fromSecret(TEST_SECRET).publicKey();
+
+    await expect(
+      tool.execute({
+        destination: ownPublicKey,
+        amount: '100',
+        assetCode: 'XLM',
+        additionalSigners: [SIGNER2],
+        minSignatures: 2,
+      })
+    ).rejects.toThrow(/own address/);
+    expect(rpcClient.loadAccount).not.toHaveBeenCalled();
+  });
+
   it('returns unsigned XDR when no signatures provided', async () => {
     const result = await tool.execute({
       destination: DEST,

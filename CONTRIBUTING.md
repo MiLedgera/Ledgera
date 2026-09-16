@@ -1,12 +1,12 @@
-# Contributing to Nodal AI
+# Contributing to Ledgera
 
-Thank you for your interest in contributing to Nodal AI! This document outlines our contribution workflow and guidelines.
+Thank you for your interest in contributing to Ledgera! This document outlines our contribution workflow and guidelines.
 
 ---
 
 ## Stellar Wave & Drips Points
 
-Nodal AI participates in the **[Stellar Wave](https://stellar.org/wave)** programme — a developer contribution sprint where every merged PR on a labelled issue earns you **Drips points** that can be redeemed within the Stellar ecosystem.
+Ledgera participates in the **[Stellar Wave](https://stellar.org/wave)** programme — a developer contribution sprint where every merged PR on a labelled issue earns you **Drips points** that can be redeemed within the Stellar ecosystem.
 
 ### What are Drips points?
 
@@ -14,7 +14,7 @@ Drips points are contribution credits issued by the Stellar Development Foundati
 
 ### How to earn points
 
-1. **Find a Wave-eligible issue**: Browse the [Issues](https://github.com/Nodal-stellar/Nodal-AI/issues) tab and filter by `good first issue`, `help wanted`, or any issue carrying a `complexity: <score>` label.
+1. **Find a Wave-eligible issue**: Browse the [Issues](https://github.com/MiLedgera/Ledgera/issues) tab and filter by `good first issue`, `help wanted`, or any issue carrying a `complexity: <score>` label.
 2. **Claim the issue**: Comment on it so maintainers can assign it to you and avoid duplicate work.
 3. **Submit a PR**: Reference the issue number (`Closes #<number>`) in your PR description. Follow the branch-naming and commit-message conventions below.
 4. **Get it merged**: Once your PR passes CI and review, it is merged and your Drips points are recorded.
@@ -49,7 +49,7 @@ Points are awarded **once per merged PR** on an issue carrying a `complexity` la
 
 We are actively participating in the **Stellar Wave** program! Here's how you can earn Drips points for your contributions:
 
-1. **Find an Issue**: Browse the [Issues](https://github.com/Nodal-stellar/Nodal-AI/issues) tab for tickets tagged `good first issue` (ideal for new contributors) or `help wanted`.
+1. **Find an Issue**: Browse the [Issues](https://github.com/MiLedgera/Ledgera/issues) tab for tickets tagged `good first issue` (ideal for new contributors) or `help wanted`.
 2. **Claim the Issue**: Comment on the issue to let maintainers know you're working on it.
 3. **Submit a PR**: Follow the guidelines below and reference the issue in your PR.
 4. **Earn Drips Points**: Once your PR is merged, you'll be eligible for Drips points!
@@ -102,7 +102,7 @@ Before submitting your PR, make sure:
 
 ## Development Workflow
 
-1. **Check Issues**: Browse the [Issues](https://github.com/Nodal-stellar/Nodal-AI/issues) tab for tickets tagged `good first issue` or `help wanted`.
+1. **Check Issues**: Browse the [Issues](https://github.com/MiLedgera/Ledgera/issues) tab for tickets tagged `good first issue` or `help wanted`.
 
 2. **Create a Feature Branch**:
    ```bash
@@ -299,7 +299,7 @@ Labels are defined in `.github/labeler.yml`. To add a new path-to-label mapping,
 
 ## Release Process
 
-Nodal AI uses [Conventional Commits](https://www.conventionalcommits.org/) to automate changelog generation and GitHub Releases.
+Ledgera uses [Conventional Commits](https://www.conventionalcommits.org/) to automate changelog generation and GitHub Releases.
 
 ### How it works
 
@@ -372,4 +372,4 @@ Open an issue on GitHub with the `question` label, and a maintainer will get bac
 
 ---
 
-Thank you for contributing to Nodal AI! 🚀
+Thank you for contributing to Ledgera! 🚀

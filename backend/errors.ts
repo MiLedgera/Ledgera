@@ -121,12 +121,19 @@ function getErrorType(error: unknown): ErrorType {
 
 export { getErrorType };
 
-const SENSITIVE_CAUSE_KEYS = new Set(['secretKey', 'privateKey', 'seed', '_secretKey']);
+// Pattern-based, not an exact-match allow-list — matches agent.ts's
+// sanitizePayload() so both sanitisation layers catch the same field names.
+// An exact-match set previously missed e.g. SponsoredAccountTool's
+// `newAccountSecret` field, which could have survived into a logged/persisted
+// cause even though sanitizePayload would have caught it on the task payload
+// itself (see audit finding S-3).
+const SENSITIVE_CAUSE_KEY_PATTERN = /secret|key|seed|mnemonic|private/i;
 
 /**
- * Recursively strips keys that may carry Stellar signing material (secretKey,
- * privateKey, seed, _secretKey) from an error cause before it is attached to
- * a thrown error, so it can't be exfiltrated via JSON-serialised logs/webhooks.
+ * Recursively strips keys that may carry Stellar signing material (anything
+ * matching /secret|key|seed|mnemonic|private/i) from an error cause before it
+ * is attached to a thrown error, so it can't be exfiltrated via
+ * JSON-serialised logs/webhooks.
  */
 export function sanitizeCause(cause: unknown): unknown {
   if (Array.isArray(cause)) {
@@ -135,7 +142,7 @@ export function sanitizeCause(cause: unknown): unknown {
   if (cause !== null && typeof cause === 'object') {
     const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(cause)) {
-      if (SENSITIVE_CAUSE_KEYS.has(key)) continue;
+      if (SENSITIVE_CAUSE_KEY_PATTERN.test(key)) continue;
       sanitized[key] = sanitizeCause(value);
     }
     return sanitized;

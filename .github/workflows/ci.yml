@@ -141,7 +141,7 @@ jobs:
       - name: Enforce WASM size budget
         run: bash scripts/check_wasm_size.sh
         env:
-          MAX_WASM_SIZE_BYTES: 200000
+          MAX_WASM_SIZE_BYTES: 120000
 
   secret-scan:
     runs-on: ubuntu-latest

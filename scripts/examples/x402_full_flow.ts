@@ -42,7 +42,7 @@ const ASSET_ISSUER_KEYPAIR = Keypair.random();
 const ASSET_CODE = 'USDC';
 
 async function main(): Promise<void> {
-  console.log('=== Nodal AI — Full Autonomous x402 Payment Flow Example ===\n');
+  console.log('=== Ledgera — Full Autonomous x402 Payment Flow Example ===\n');
 
   const app = express();
   app.use(express.json());

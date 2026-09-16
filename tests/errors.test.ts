@@ -135,4 +135,19 @@ describe('sanitizeCause', () => {
     expect(sanitizeCause(undefined)).toBeUndefined();
     expect(sanitizeCause(42)).toBe(42);
   });
+
+  // Audit finding S-3: the previous exact-match allow-list
+  // (secretKey/privateKey/seed/_secretKey) missed field names it didn't
+  // enumerate up front, such as SponsoredAccountTool's `newAccountSecret`.
+  // sanitizeCause is now pattern-based, matching agent.ts's sanitizePayload().
+  it('strips field names not covered by the old exact-match list, e.g. newAccountSecret', () => {
+    const cause = { newAccountSecret: 'SASECRET', newAccountPublicKey: 'GABC', mnemonic: 'x' };
+    const result = sanitizeCause(cause) as Record<string, unknown>;
+    expect(result.newAccountSecret).toBeUndefined();
+    expect(result.mnemonic).toBeUndefined();
+    // Collateral over-redaction is the accepted tradeoff of pattern matching:
+    // "PublicKey" contains "key" and gets stripped even though it's not
+    // sensitive — consistent with sanitizePayload()'s existing behaviour.
+    expect(result.newAccountPublicKey).toBeUndefined();
+  });
 });

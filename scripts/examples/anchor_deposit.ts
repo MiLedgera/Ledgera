@@ -129,7 +129,7 @@ if (!secretKey) {
 }
 const agentPublicKey = Keypair.fromSecret(secretKey).publicKey();
 
-console.log('=== Nodal AI — Anchor Deposit Example ===\n');
+console.log('=== Ledgera — Anchor Deposit Example ===\n');
 console.log(`Agent public key : ${agentPublicKey}`);
 console.log(`Anchor URL       : ${ANCHOR_URL}`);
 console.log(`Asset            : ${ANCHOR_ASSET_CODE}:${ANCHOR_ASSET_ISSUER}`);

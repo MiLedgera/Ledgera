@@ -77,6 +77,35 @@ All public entry points are defined on the `EscrowContract` struct:
 - **Purpose**: Reads and returns the current lifecycle state of the escrow (`Uninitialized`, `Active`, or `Settled`).
 - **Authorization**: None (Read-only query).
 
+### `release_partial(env: Env, arbiter: Address, release_amount: i128)`
+- **Purpose**: Releases part of the locked amount to the recipient, enabling milestone-based PayFi contracts (e.g. 50% on delivery, 50% on acceptance). The escrow stays `Active` (`Released = false`) until the stored amount reaches 0, at which point it seals to `Settled`.
+- **Authorization**: Requires arbiter signature (`arbiter.require_auth()`), checked against the stored arbiter (not the `arbiter` parameter — see the TOCTOU note below).
+- **Validation**:
+  - Only the registered arbiter can execute.
+  - Escrow must not already be fully released.
+  - `release_amount` must be positive and must not exceed the remaining stored amount.
+
+### `cancel(env: Env, depositor: Address, arbiter: Address)`
+- **Purpose**: Cancels the escrow before expiry and refunds the full remaining amount to the depositor — a mutual-consent early exit, as opposed to `refund()` which only works after expiry.
+- **Authorization**: Requires **both** depositor and arbiter signatures (dual-authorization; neither party can cancel unilaterally).
+- **Validation**:
+  - Both `depositor` and `arbiter` must match the stored addresses.
+  - Escrow must not already be fully released.
+
+### `propose_new_arbiter(env: Env, depositor: Address, new_arbiter: Address)`
+- **Purpose**: Begins a time-locked arbiter rotation. Stores `new_arbiter` as pending along with the current timestamp; takes effect only after `accept_arbiter_rotation()` is called once `MIN_ROTATION_DELAY` (24 hours) has elapsed.
+- **Authorization**: Requires depositor signature (`depositor.require_auth()`).
+- **Validation**:
+  - Only the registered depositor can propose a rotation.
+  - Escrow must be initialized.
+
+### `accept_arbiter_rotation(env: Env)`
+- **Purpose**: Finalizes a pending arbiter rotation once the time lock has elapsed, replacing the stored arbiter with the pending one.
+- **Authorization**: **None** — callable by anyone once `MIN_ROTATION_DELAY` has passed since `propose_new_arbiter()`. This is intentional: finalization is a no-trust-required state transition (the new arbiter was already committed to storage by the depositor; this call only applies a matured, tamper-proof timer), not an action that moves funds or grants new authority to the caller.
+- **Validation**:
+  - A rotation must be pending (`propose_new_arbiter()` was called and not yet accepted).
+  - The 24-hour lock (`MIN_ROTATION_DELAY`) must have elapsed, computed via checked addition so it cannot be bypassed by timestamp overflow.
+
 ---
 
 ## EscrowError Reference
@@ -86,12 +115,16 @@ If an execution condition is violated, the contract panics with one of the follo
 | Code | Variant | Description |
 | :--- | :--- | :--- |
 | `1` | `AlreadyInitialized` | Escrow state has already been initialized. |
-| `2` | `AmountNotPositive` | Amount to lock must be greater than 0. |
-| `3` | `ExpiryNotInFuture` | Expiry timestamp must be greater than the current ledger timestamp. |
+| `2` | `AlreadyReleased` | Escrow is already fully settled (released, refunded, or cancelled). |
+| `3` | `NotExpired` | Attempted refund before the expiration timestamp. |
 | `4` | `NotArbiter` | The calling address is not the stored arbiter. |
 | `5` | `NotDepositor` | The calling address is not the stored depositor. |
-| `6` | `NotExpired` | Attempted refund before the expiration timestamp. |
-| `7` | `AlreadySettled` | Escrow is already settled (funds were already released or refunded). |
+| `6` | `InvalidAmount` | Amount (or `release_partial`'s `release_amount`) is not positive, or exceeds the remaining stored amount. |
+| `7` | `InvalidExpiry` | Expiry timestamp must be greater than the current ledger timestamp. |
+| `8` | `NotInitialized` | Called before `initialize()`, or the depositor key is missing from storage. |
+| `9` | `InvalidParties` | Depositor, recipient, and arbiter are not all pairwise distinct. |
+| `10` | `RotationLocked` | `accept_arbiter_rotation()` called before `MIN_ROTATION_DELAY` (24h) has elapsed since the proposal. |
+| `11` | `NoPendingRotation` | `accept_arbiter_rotation()` called with no prior `propose_new_arbiter()` call. |
 
 ---
 
