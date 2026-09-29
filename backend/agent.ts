@@ -59,30 +59,111 @@ export { spendingTracker };
 // ─── Spending limit guard ─────────────────────────────────────────────────────
 
 /**
- * Check that a payment amount does not exceed the configured spending limit.
- * Also enforces cumulative spending within the sliding window.
+ * Resolve a raw amount + asset into the numeric value the spending caps are
+ * actually denominated in.
+ *
+ * AGENT_SPENDING_LIMIT, AGENT_HOURLY_SPENDING_LIMIT, AGENT_DAILY_SPENDING_LIMIT,
+ * and MAINNET_SPENDING_CAP apply to the "reference asset": native XLM, or the
+ * configured X402_ASSET_CODE/X402_ASSET_ISSUER pair — both treated as par-value
+ * units (see MAINNET_SPENDING_CAP's doc comment in config.ts). A payment in any
+ * other asset cannot be compared against these caps at face value, so it is
+ * either rejected outright or converted to the reference asset first, per
+ * `config.SPENDING_LIMIT_UNKNOWN_ASSET_POLICY`.
+ *
+ * @throws {Error} If the asset is neither the reference asset nor convertible
+ *   under the current policy/rate table.
  */
-function assertWithinSpendingLimit(amount: unknown): void {
+function resolveReferenceAmount(
+  parsed: number,
+  rawAmount: string,
+  assetCode: unknown,
+  assetIssuer: unknown
+): { amount: number; assetLabel: string } {
+  const code = typeof assetCode === 'string' ? assetCode : undefined;
+  const issuer = typeof assetIssuer === 'string' ? assetIssuer : undefined;
+
+  const isReferenceAsset =
+    code === undefined ||
+    code === 'XLM' ||
+    (code === config.X402_ASSET_CODE &&
+      (issuer === undefined || issuer === config.X402_ASSET_ISSUER));
+
+  if (isReferenceAsset || code === undefined) {
+    // `code === undefined` is redundant with `isReferenceAsset` (already true
+    // in that case) but narrows `code` from `string | undefined` to `string`
+    // for TypeScript in the non-reference branch below.
+    return { amount: parsed, assetLabel: code ?? config.X402_ASSET_CODE };
+  }
+
+  if (config.SPENDING_LIMIT_UNKNOWN_ASSET_POLICY === 'reject') {
+    throw new Error(
+      `Payment asset ${code} is not XLM or the configured reference asset ` +
+        `(${config.X402_ASSET_CODE}) — the spending-limit guard cannot evaluate ` +
+        `it without a conversion rate. Set SPENDING_LIMIT_UNKNOWN_ASSET_POLICY=convert ` +
+        `and configure ASSET_CONVERSION_RATES to allow payments in ${code}.`
+    );
+  }
+
+  const rate = config.ASSET_CONVERSION_RATES?.[code];
+  if (rate === undefined) {
+    throw new Error(
+      `No conversion rate configured for asset ${code} in ASSET_CONVERSION_RATES — ` +
+        `cannot evaluate the spending limit for amount ${rawAmount} ${code}`
+    );
+  }
+
+  return {
+    amount: parsed * rate,
+    assetLabel: `${config.X402_ASSET_CODE} (converted from ${rawAmount} ${code} at rate ${rate})`,
+  };
+}
+
+/**
+ * Check that a payment amount does not exceed the configured spending limit,
+ * the mainnet safety cap, or the rolling hourly/daily cumulative caps.
+ *
+ * `assetCode`/`assetIssuer` identify what the amount is denominated in; pass
+ * them whenever the task payload carries them so a payment in an asset other
+ * than the reference asset (see {@link resolveReferenceAmount}) is rejected —
+ * or converted — instead of being compared against the caps at face value.
+ * Omit them (or pass `undefined`) when the caller already knows the amount is
+ * native XLM (e.g. `sponsored_account`'s startingBalance).
+ */
+function assertWithinSpendingLimit(
+  amount: unknown,
+  assetCode?: unknown,
+  assetIssuer?: unknown
+): void {
   if (typeof amount !== 'string') return; // let the tool's own schema catch this
 
-  const parsed = parseFloat(amount);
+  const rawParsed = parseFloat(amount);
+  if (isNaN(rawParsed)) return; // let the tool's own schema catch this
+
+  const { amount: parsed, assetLabel } = resolveReferenceAmount(
+    rawParsed,
+    amount,
+    assetCode,
+    assetIssuer
+  );
   const limit = parseFloat(config.AGENT_SPENDING_LIMIT);
 
-  if (!isNaN(parsed) && parsed > limit) {
+  if (parsed > limit) {
     throw new Error(
-      `Payment amount ${amount} ${config.X402_ASSET_CODE} exceeds ` +
+      `Payment amount ${amount} ${assetLabel} exceeds ` +
         `AGENT_SPENDING_LIMIT of ${config.AGENT_SPENDING_LIMIT}`
     );
   }
-  if (!isNaN(parsed) && config.STELLAR_NETWORK === 'mainnet' && parsed > MAINNET_SPENDING_CAP) {
+  if (config.STELLAR_NETWORK === 'mainnet' && parsed > MAINNET_SPENDING_CAP) {
     throw new Error(
-      `Payment amount ${amount} ${config.X402_ASSET_CODE} exceeds ` +
+      `Payment amount ${amount} ${assetLabel} exceeds ` +
         `mainnet spending cap of ${MAINNET_SPENDING_CAP}`
     );
   }
 
-  // Record cumulative spending (after individual checks pass)
-  spendingTracker.record(amount);
+  // Record cumulative spending (after individual checks pass), in
+  // reference-asset units so amounts from different assets accumulate
+  // honestly against the same rolling window.
+  spendingTracker.record(String(parsed));
 }
 
 const log = createLogger('orchestrator');
@@ -634,7 +715,7 @@ export class PayFiAgent extends EventEmitter {
         switch (task.type) {
           case 'stellar_payment': {
             const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.amount);
+            assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
             const paymentResult = await this.paymentTool.execute(task.payload);
             data = {
               ...paymentResult,
@@ -654,7 +735,7 @@ export class PayFiAgent extends EventEmitter {
 
           case 'x402_respond': {
             const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.amount);
+            assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
             data = await this.x402Tool.respond(task.payload);
             break;
           }
@@ -669,7 +750,7 @@ export class PayFiAgent extends EventEmitter {
 
           case 'multisig_payment': {
             const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.amount);
+            assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
             data = await this.multiSigTool.execute(task.payload);
             break;
           }
@@ -677,14 +758,37 @@ export class PayFiAgent extends EventEmitter {
           case 'batch_payment': {
             const p = task.payload as Record<string, unknown>;
             const payments = Array.isArray(p?.payments) ? (p.payments as unknown[]) : [];
-            const total = payments.reduce((sum: number, payment) => {
-              const amt = parseFloat(String((payment as Record<string, unknown>)?.amount));
-              return sum + (isNaN(amt) ? 0 : amt);
-            }, 0);
             // Batch is one atomic transaction — enforce the cap and mainnet ceiling
             // against the aggregate, and record the aggregate against the rolling
             // window so batching can't be used to evade it (see audit finding S-1).
-            assertWithinSpendingLimit(total > 0 ? String(total) : undefined);
+            // Payments can mix assets, so the aggregate is computed per asset —
+            // summing raw amounts across different assets as one number would
+            // silently misjudge the limit for either asset.
+            const totalsByAsset = new Map<
+              string,
+              { total: number; assetCode?: unknown; assetIssuer?: unknown }
+            >();
+            for (const payment of payments) {
+              const pp = payment as Record<string, unknown>;
+              const amt = parseFloat(String(pp?.amount));
+              if (isNaN(amt)) continue;
+              const assetCode = pp?.assetCode;
+              const assetIssuer = pp?.assetIssuer;
+              const key = `${String(assetCode ?? 'XLM')}:${String(assetIssuer ?? '')}`;
+              const existing = totalsByAsset.get(key);
+              if (existing) {
+                existing.total += amt;
+              } else {
+                totalsByAsset.set(key, { total: amt, assetCode, assetIssuer });
+              }
+            }
+            for (const { total, assetCode, assetIssuer } of totalsByAsset.values()) {
+              assertWithinSpendingLimit(
+                total > 0 ? String(total) : undefined,
+                assetCode,
+                assetIssuer
+              );
+            }
             data = await this.batchPaymentTool.execute(task.payload);
             break;
           }
@@ -706,7 +810,8 @@ export class PayFiAgent extends EventEmitter {
 
           case 'path_payment': {
             const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.sendAmount);
+            const sendAsset = p?.sendAsset as Record<string, unknown> | undefined;
+            assertWithinSpendingLimit(p?.sendAmount, sendAsset?.code, sendAsset?.issuer);
             data = await this.pathPaymentTool.execute(task.payload);
             break;
           }
@@ -721,7 +826,8 @@ export class PayFiAgent extends EventEmitter {
             // input amount (see DexOfferTool) and reduces exposure rather than
             // creating it, so only create/update are checked against the cap.
             if (p?.action !== 'delete') {
-              assertWithinSpendingLimit(p?.amount);
+              const selling = p?.selling as Record<string, unknown> | undefined;
+              assertWithinSpendingLimit(p?.amount, selling?.code, selling?.issuer);
             }
             data = await this.dexOfferTool.execute(task.payload);
             break;
@@ -729,7 +835,8 @@ export class PayFiAgent extends EventEmitter {
 
           case 'swap': {
             const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.sellAmount);
+            const sellAsset = p?.sellAsset as Record<string, unknown> | undefined;
+            assertWithinSpendingLimit(p?.sellAmount, sellAsset?.code, sellAsset?.issuer);
             data = await this.swapTool.execute(task.payload);
             break;
           }
@@ -747,8 +854,10 @@ export class PayFiAgent extends EventEmitter {
             // Only "deposit" commits new funds into the pool; "withdraw" returns
             // funds to the agent and "info" is read-only, so neither is checked.
             if (p?.action === 'deposit') {
-              assertWithinSpendingLimit(p?.maxAmountA);
-              assertWithinSpendingLimit(p?.maxAmountB);
+              const assetA = p?.assetA as Record<string, unknown> | undefined;
+              const assetB = p?.assetB as Record<string, unknown> | undefined;
+              assertWithinSpendingLimit(p?.maxAmountA, assetA?.code, assetA?.issuer);
+              assertWithinSpendingLimit(p?.maxAmountB, assetB?.code, assetB?.issuer);
             }
             data = await this.liquidityPoolTool.execute(task.payload);
             break;
@@ -784,7 +893,7 @@ export class PayFiAgent extends EventEmitter {
           case 'claimable_balance': {
             const p = task.payload as Record<string, unknown>;
             if (p?.action === 'create') {
-              assertWithinSpendingLimit(p?.amount);
+              assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
             }
             data = await this.claimableBalanceTool.execute(task.payload);
             break;

@@ -198,6 +198,15 @@ vi.mock('../backend/webhook', () => ({
 
 vi.mock('../backend/persistence', () => ({
   saveResult: vi.fn(),
+  // spending_tracker.ts's atomic path reads these; leaving them undefined
+  // makes any property access throw ("did you forget to return it?") instead
+  // of the plain TypeError the fallback-to-in-memory path expects, so a
+  // wrapped call is provided (throws, which is what "persistence unavailable"
+  // looks like) alongside the real error class so `instanceof` still works.
+  checkAndRecordSpending: vi.fn(() => {
+    throw new Error('mock: persistence unavailable');
+  }),
+  SpendingLimitExceededError: class SpendingLimitExceededError extends Error {},
 }));
 
 // Named so `instanceof rpcClient.StellarRPCError` checks in agent.ts's error

@@ -128,6 +128,57 @@ const EnvSchema = z.object({
   // Spending cap
   AGENT_SPENDING_LIMIT: SpendingLimitSchema,
 
+  // Optional rolling-window cumulative caps, layered on top of AGENT_SPENDING_LIMIT's
+  // per-transaction check. Undefined disables that window's cumulative check.
+  AGENT_HOURLY_SPENDING_LIMIT: z
+    .string()
+    .regex(
+      /^[1-9]\d*(\.\d{1,7})?$/,
+      "AGENT_HOURLY_SPENDING_LIMIT must be a positive decimal (e.g. '500')"
+    )
+    .optional(),
+  AGENT_DAILY_SPENDING_LIMIT: z
+    .string()
+    .regex(
+      /^[1-9]\d*(\.\d{1,7})?$/,
+      "AGENT_DAILY_SPENDING_LIMIT must be a positive decimal (e.g. '2000')"
+    )
+    .optional(),
+
+  // How an amount denominated in an asset other than XLM or the configured
+  // X402_ASSET_CODE/X402_ASSET_ISSUER reference pair is handled by the spending
+  // guard: reject it outright, or convert it to the reference asset via
+  // ASSET_CONVERSION_RATES before comparing it against the caps.
+  SPENDING_LIMIT_UNKNOWN_ASSET_POLICY: z.enum(['reject', 'convert']).default('reject'),
+
+  // JSON object mapping an asset code to how many reference-asset units
+  // (XLM / X402_ASSET_CODE, treated as par) one unit of that asset is worth,
+  // e.g. {"BTC":"65000","PEPE":"0.00000001"}. Only consulted when
+  // SPENDING_LIMIT_UNKNOWN_ASSET_POLICY is "convert".
+  ASSET_CONVERSION_RATES: z
+    .string()
+    .optional()
+    .refine(
+      (val) => {
+        if (val === undefined) return true;
+        try {
+          const parsed: unknown = JSON.parse(val);
+          return (
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            !Array.isArray(parsed) &&
+            Object.values(parsed).every((v) => typeof v === 'string' && !isNaN(parseFloat(v)))
+          );
+        } catch {
+          return false;
+        }
+      },
+      {
+        message:
+          'ASSET_CONVERSION_RATES must be a JSON object of asset code -> numeric string rate',
+      }
+    ),
+
   // Persistence
   DB_PATH: z.string().default('./agent.db'),
 
@@ -246,6 +297,37 @@ export interface AgentConfig {
    * "0" is not permitted. Defaults to "100".
    */
   readonly AGENT_SPENDING_LIMIT: string;
+
+  /**
+   * Optional cumulative cap on spending within a trailing 1-hour window,
+   * layered on top of the per-transaction AGENT_SPENDING_LIMIT check.
+   * Denominated in the same reference asset as AGENT_SPENDING_LIMIT
+   * (XLM or X402_ASSET_CODE — see SPENDING_LIMIT_UNKNOWN_ASSET_POLICY).
+   * Undefined disables the hourly cumulative check.
+   */
+  readonly AGENT_HOURLY_SPENDING_LIMIT?: string | undefined;
+
+  /**
+   * Optional cumulative cap on spending within a trailing 24-hour window.
+   * Same denomination and semantics as AGENT_HOURLY_SPENDING_LIMIT.
+   */
+  readonly AGENT_DAILY_SPENDING_LIMIT?: string | undefined;
+
+  /**
+   * How the spending guard treats a payment denominated in an asset other
+   * than XLM or the configured X402_ASSET_CODE/X402_ASSET_ISSUER pair:
+   * - "reject" (default): refuse the task before any network call.
+   * - "convert": look up a rate in ASSET_CONVERSION_RATES and compare the
+   *   converted amount against the caps instead.
+   */
+  readonly SPENDING_LIMIT_UNKNOWN_ASSET_POLICY: 'reject' | 'convert';
+
+  /**
+   * Parsed asset-code -> rate map used when SPENDING_LIMIT_UNKNOWN_ASSET_POLICY
+   * is "convert". A rate is "how many reference-asset units one unit of this
+   * asset is worth". Undefined when ASSET_CONVERSION_RATES is not set.
+   */
+  readonly ASSET_CONVERSION_RATES?: Readonly<Record<string, number>> | undefined;
 
   /**
    * The maximum number of retry attempts for transient network/RPC calls.
@@ -458,10 +540,21 @@ function parseConfigAndDerive(): AgentConfig {
     OTLP_ENDPOINT,
     WEBHOOK_URL,
     WEBHOOK_SECRET,
+    ASSET_CONVERSION_RATES: _rawConversionRates,
     ...rest
   } = raw;
 
   const rpcTimeoutMs = raw.RPC_TIMEOUT_MS ?? raw.RETRY_DELAY_MS * raw.MAX_RETRIES * 2;
+
+  // Parsed once at startup — the schema already validated it is a JSON object
+  // of asset code -> numeric string, so this parse cannot fail here.
+  const assetConversionRates: Record<string, number> | undefined = _rawConversionRates
+    ? Object.fromEntries(
+        Object.entries(JSON.parse(_rawConversionRates) as Record<string, string>).map(
+          ([code, rate]) => [code, parseFloat(rate)]
+        )
+      )
+    : undefined;
 
   // Derive the keypair once at startup. agentKeypair returns this cached instance
   // on every call, avoiding repeated Ed25519 derivation.
@@ -483,6 +576,7 @@ function parseConfigAndDerive(): AgentConfig {
     ...(raw.CONTRACT_EVENT_POLL_MS !== undefined
       ? { CONTRACT_EVENT_POLL_MS: raw.CONTRACT_EVENT_POLL_MS }
       : {}),
+    ...(assetConversionRates ? { ASSET_CONVERSION_RATES: assetConversionRates } : {}),
     // Secret is captured in closure; never on the object
     agentKeypair: () => _keypair,
   };
@@ -604,6 +698,15 @@ export const config = new Proxy({} as AgentConfig, {
  * Hardcoded spending limit (safety cap) for transactions on Stellar mainnet.
  * Any single operation/payment attempting to exceed this value will be blocked
  * by the spending limit assertion before submission.
+ *
+ * Denomination: this cap (and AGENT_SPENDING_LIMIT / AGENT_HOURLY_SPENDING_LIMIT /
+ * AGENT_DAILY_SPENDING_LIMIT) apply to an amount denominated in the "reference
+ * asset" — native XLM, or the configured X402_ASSET_CODE/X402_ASSET_ISSUER pair.
+ * Both are treated as par-value units by these caps; they are NOT converted
+ * against each other or against any other asset. A payment in any other asset
+ * is handled per SPENDING_LIMIT_UNKNOWN_ASSET_POLICY in backend/agent.ts's
+ * `assertWithinSpendingLimit`: rejected outright, or converted to the reference
+ * asset via ASSET_CONVERSION_RATES before this cap is applied.
  */
 export const MAINNET_SPENDING_CAP = 10000;
 
