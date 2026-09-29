@@ -52,12 +52,29 @@ function applySchema(db: Database.Database): void {
   }
 }
 
+/**
+ * Apply the pragmas the spending-window atomicity guarantee depends on.
+ *
+ * `busy_timeout` makes a second process's write block-and-retry instead of
+ * failing immediately with SQLITE_BUSY when it arrives while another
+ * process's immediate transaction (see {@link checkAndRecordSpending}) still
+ * holds the write lock. WAL is skipped for `:memory:` — SQLite does not
+ * support it there, and the pragma would be a silent no-op anyway.
+ */
+function applyConcurrencyPragmas(db: Database.Database, dbPath: string): void {
+  db.pragma('busy_timeout = 5000');
+  if (dbPath !== ':memory:') {
+    db.pragma('journal_mode = WAL');
+  }
+}
+
 function getDb(): Database.Database {
   if (!_db) {
     // Lazy import of config so that tests can inject via _setDb() before any DB access
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { config } = require('./config') as typeof import('./config');
     _db = new Database(config.DB_PATH);
+    applyConcurrencyPragmas(_db, config.DB_PATH);
     applySchema(_db);
   }
   return _db;
@@ -168,8 +185,95 @@ export function clearSpendingRecords(): void {
   getDb().prepare(`DELETE FROM spending_records`).run();
 }
 
-/** Replace the underlying DB instance — used in tests to inject an in-memory DB. */
-export function _setDb(db: Database.Database): void {
+/**
+ * Replace the underlying DB instance — used in tests to inject an in-memory or
+ * file-backed DB. Pass `dbPath` (the path the caller opened `db` with) when the
+ * test needs the concurrency pragmas applied, e.g. to exercise cross-connection
+ * atomicity against a real file rather than a private `:memory:` database.
+ */
+export function _setDb(db: Database.Database, dbPath = ':memory:'): void {
   _db = db;
+  applyConcurrencyPragmas(_db, dbPath);
   applySchema(_db);
+}
+
+/** Raised by {@link checkAndRecordSpending} when a window's cap would be exceeded. */
+export class SpendingLimitExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SpendingLimitExceededError';
+    Object.setPrototypeOf(this, SpendingLimitExceededError.prototype);
+  }
+}
+
+/** One rolling-window cumulative cap to enforce inside {@link checkAndRecordSpending}. */
+export interface SpendingWindowCheck {
+  /** Human-readable window name, used only in the thrown error message. */
+  label: string;
+  windowMs: number;
+  /** Undefined skips this window's check entirely. */
+  limit: number | undefined;
+}
+
+/**
+ * Atomically check every configured rolling window against `amount` and, if
+ * none would be exceeded, record it — all inside a single SQLite immediate
+ * transaction.
+ *
+ * The immediate transaction acquires SQLite's write lock before reading, so a
+ * second process (or connection) attempting the same call blocks until this
+ * one commits or rolls back, instead of racing a stale in-memory sum the way
+ * a separate read-then-write would. This is what makes the rolling window
+ * safe across process restarts *and* concurrent `PayFiAgent.run()` calls,
+ * whether from the same process or several sharing one database file.
+ *
+ * Throws {@link SpendingLimitExceededError} — and inserts nothing — the
+ * moment any window's cap would be exceeded. Any other thrown error (e.g. the
+ * database is unreachable) means the caller should fall back to a
+ * best-effort, in-memory-only check instead of trusting this result.
+ */
+export function checkAndRecordSpending(
+  amount: number,
+  timestamp: number,
+  windows: SpendingWindowCheck[]
+): void {
+  const db = getDb();
+  const activeWindows = windows.filter(
+    (w): w is SpendingWindowCheck & { limit: number } => w.limit !== undefined && !isNaN(w.limit)
+  );
+
+  const run = db.transaction(() => {
+    // Bound the table by the widest window in play; anything older is dead
+    // weight no active check will ever look at again.
+    if (activeWindows.length > 0) {
+      const maxWindowMs = Math.max(...activeWindows.map((w) => w.windowMs));
+      db.prepare(`DELETE FROM spending_records WHERE timestamp < ?`).run(timestamp - maxWindowMs);
+    }
+
+    for (const w of activeWindows) {
+      const cutoff = timestamp - w.windowMs;
+      const row = db
+        .prepare(
+          `SELECT COALESCE(SUM(amount), 0) AS total FROM spending_records WHERE timestamp >= ?`
+        )
+        .get(cutoff) as { total: number };
+      const projected = row.total + amount;
+      if (projected > w.limit) {
+        // "Cumulative spending" (no window label) is the pre-existing generic
+        // window's wording — kept verbatim so it stays a stable substring for
+        // callers/tests matching on it. Named windows (hourly/daily) get an
+        // explicit label so the two are distinguishable in logs.
+        const prefix =
+          w.label === 'window' ? 'Cumulative spending' : `Cumulative ${w.label} spending`;
+        throw new SpendingLimitExceededError(`${prefix} ${projected} exceeds limit ${w.limit}`);
+      }
+    }
+
+    db.prepare(`INSERT INTO spending_records (amount, timestamp) VALUES (?, ?)`).run(
+      amount,
+      timestamp
+    );
+  });
+
+  run.immediate();
 }
