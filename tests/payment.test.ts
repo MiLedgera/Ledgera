@@ -13,11 +13,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
 import { Keypair } from '@stellar/stellar-sdk';
 import { z } from 'zod';
 import { StellarPaymentTool } from '../backend/tools/StellarPaymentTool';
 import { SubmitResultSchema } from '../backend/tools/StellarPaymentTool';
 import * as rpcClient from '../backend/rpc_client';
+import { _setDb } from '../backend/persistence';
 import type { MockHorizonServer } from './fixtures/MockHorizonServer';
 import { makeMockAccount } from './fixtures/MockHorizonServer';
 
@@ -51,6 +53,7 @@ vi.mock('../backend/config', () => {
       RETRY_DELAY_MS: 100,
       AGENT_PUBLIC_KEY: Keypair.fromSecret(secret).publicKey(),
       agentKeypair: () => Keypair.fromSecret(secret),
+      DB_PATH: ':memory:',
     },
   };
 });
@@ -69,6 +72,10 @@ describe('StellarPaymentTool', () => {
 
   beforeEach(() => {
     mockHorizonServer.reset();
+    // Fresh in-memory idempotency ledger per test (backend/tx_idempotency.ts
+    // persists via backend/persistence.ts, which is not part of the
+    // rpc_client mock above).
+    _setDb(new Database(':memory:'));
     tool = new StellarPaymentTool();
   });
 

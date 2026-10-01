@@ -204,6 +204,13 @@ export interface AgentTask {
   /**
    * Optional caller-supplied correlation ID. When omitted, `run()` generates
    * one so every task execution is traceable end-to-end.
+   *
+   * For `stellar_payment`, this also doubles as the submission's idempotency
+   * key (see `backend/tx_idempotency.ts`): a caller that retries a task by
+   * reusing the same correlationId is protected against double-submission if
+   * the original attempt's outcome was ambiguous (e.g. it actually landed but
+   * the response timed out). A fresh correlationId each attempt — which is
+   * what happens if this field is omitted — does not get that protection.
    */
   correlationId?: string;
 }
@@ -716,7 +723,13 @@ export class PayFiAgent extends EventEmitter {
           case 'stellar_payment': {
             const p = task.payload as Record<string, unknown>;
             assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
-            const paymentResult = await this.paymentTool.execute(task.payload);
+            // correlationId doubles as the idempotency key: a caller that
+            // retries this exact task by reusing the same correlationId gets
+            // deduplicated against a prior attempt that actually landed (see
+            // backend/tx_idempotency.ts). A caller-generated-fresh-each-time
+            // correlationId (the default when none is supplied) does not get
+            // this protection — see StellarPaymentTool.execute's doc comment.
+            const paymentResult = await this.paymentTool.execute(task.payload, correlationId);
             data = {
               ...paymentResult,
               network: config.STELLAR_NETWORK,

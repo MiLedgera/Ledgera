@@ -15,10 +15,12 @@ import {
   BASE_FEE,
   StrKey,
 } from '@stellar/stellar-sdk';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { config } from '../config';
 import { logger } from '../logger';
-import { loadAccount, resolveNetworkPassphrase, submitTransaction } from '../rpc_client';
+import { resolveNetworkPassphrase, type HorizonAccount } from '../rpc_client';
+import { submitIdempotent } from '../tx_idempotency';
 import { SOROBAN_TX_TIMEOUT } from './SorobanInvokeTool';
 import { createLogger } from '../utils/logger';
 import { buildMemo } from './memo';
@@ -114,16 +116,27 @@ export class StellarPaymentTool {
    * 2. Resolve asset (native XLM or custom asset)
    * 3. Load source account to get latest sequence number
    * 4. Build transaction with payment operation and optional memo
-   * 5. Validate transaction envelope
-   * 6. Sign transaction with keypair
-   * 7. Submit transaction to the network
+   * 5. Sign transaction with keypair
+   * 6. Submit idempotently (see `backend/tx_idempotency.ts`) — a retry with
+   *    the same `idempotencyKey` is checked against the previously recorded
+   *    transaction hash's on-chain status before anything new is built or
+   *    broadcast, so a client-side timeout after a submission that actually
+   *    landed can never result in a duplicate payment.
    *
    * @param rawInput - Raw payment input (will be validated)
+   * @param idempotencyKey - Stable identifier for this logical payment.
+   *   Pass the same value on a retry (e.g. the task's `correlationId`) to get
+   *   the idempotency guarantee above. Omitted means a fresh key is generated
+   *   per call, which makes this call *not* retry-safe against duplication —
+   *   fine for a one-shot call, not for an automated retry loop.
    * @returns Object containing transaction hash and ledger number
    * @throws {z.ZodError} If input fails validation
    * @throws {Error} If source account not found or transaction submission fails
    */
-  async execute(rawInput: unknown): Promise<{ txHash: string; ledger: number }> {
+  async execute(
+    rawInput: unknown,
+    idempotencyKey?: string
+  ): Promise<{ txHash: string; ledger: number }> {
     // 1. Validate input
     const input = PaymentInputSchema.parse(rawInput);
 
@@ -139,37 +152,6 @@ export class StellarPaymentTool {
     const asset =
       input.assetCode === 'XLM' ? Asset.native() : new Asset(input.assetCode, input.assetIssuer);
 
-    // 3. Load source account (latest sequence number)
-    let sourceAccount = await loadAccount(this.keypair.publicKey());
-
-    // 4. Build transaction
-    const buildTx = () => {
-      const builder = new TransactionBuilder(sourceAccount, {
-        fee: BASE_FEE, // BASE_FEE (100 stroops) is the actual fee for classic Stellar payments — not overwritten
-        networkPassphrase: this.networkPassphrase,
-      }).addOperation(
-        Operation.payment({
-          destination: input.destination,
-          asset,
-          amount: input.amount,
-        })
-      );
-
-      if (input.memo !== undefined) {
-        const memo = buildMemo(input.memoType, input.memo);
-        if (memo) {
-          builder.addMemo(memo);
-        }
-      }
-
-      return builder.setTimeout(SOROBAN_TX_TIMEOUT).build();
-    };
-
-    let tx = buildTx();
-
-    // 5. Fee estimation / simulation via Horizon dry-run
-    //    (Horizon doesn't expose simulation like Soroban, so we validate
-    //     the transaction envelope locally before submission)
     logger.info('Validating payment envelope', {
       source: this.keypair.publicKey(),
       destination: input.destination,
@@ -177,27 +159,49 @@ export class StellarPaymentTool {
       assetCode: input.assetCode,
     });
 
-    // 6. Sign
-    tx.sign(this.keypair);
-
-    // 7. Submit (with auto-retry on tx_bad_seq)
-    try {
-      const result = SubmitResultSchema.parse(await submitTransaction(tx));
-      return { txHash: result.hash, ledger: result.ledger };
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('tx_bad_seq')) {
-        logger.warn('tx_bad_seq detected, reloading account and retrying once', {
-          source: this.keypair.publicKey(),
-        });
-        // Bypass the account cache: the whole point of this retry is that the
-        // sequence we used was wrong, so a cached record must not be reused.
-        sourceAccount = await loadAccount(this.keypair.publicKey(), { forceRefresh: true });
-        tx = buildTx();
-        tx.sign(this.keypair);
-        const result = SubmitResultSchema.parse(await submitTransaction(tx));
-        return { txHash: result.hash, ledger: result.ledger };
-      }
-      throw err;
+    const key = idempotencyKey ?? randomUUID();
+    if (!idempotencyKey) {
+      logger.warn(
+        'stellar_payment executed without an idempotency key — a caller-side retry of this ' +
+          'call cannot be deduplicated against a prior attempt that actually landed',
+        { source: this.keypair.publicKey() }
+      );
     }
+
+    // 3-6. Idempotent load → build → sign → submit. buildAndSign is invoked
+    // fresh for every internal attempt (tx_bad_seq retry, ambiguous-outcome
+    // recheck) so each attempt gets a transaction built against the account
+    // state that attempt actually saw.
+    return submitIdempotent({
+      idempotencyKey: key,
+      sourceAccountId: this.keypair.publicKey(),
+      buildAndSign: (sourceAccount: HorizonAccount) => {
+        const builder = new TransactionBuilder(sourceAccount, {
+          fee: BASE_FEE, // BASE_FEE (100 stroops) is the actual fee for classic Stellar payments — not overwritten
+          networkPassphrase: this.networkPassphrase,
+        }).addOperation(
+          Operation.payment({
+            destination: input.destination,
+            asset,
+            amount: input.amount,
+          })
+        );
+
+        if (input.memo !== undefined) {
+          const memo = buildMemo(input.memoType, input.memo);
+          if (memo) {
+            builder.addMemo(memo);
+          }
+        }
+
+        // Tight, fixed validity window: the transaction becomes impossible to
+        // apply SOROBAN_TX_TIMEOUT (30s) after this build, which bounds how
+        // long a "stuck" (not-yet-included) transaction can remain ambiguous
+        // before resubmitStuckTransaction's not-found check is trustworthy.
+        const tx = builder.setTimeout(SOROBAN_TX_TIMEOUT).build();
+        tx.sign(this.keypair);
+        return tx;
+      },
+    });
   }
 }

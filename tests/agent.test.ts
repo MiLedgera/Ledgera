@@ -1205,7 +1205,10 @@ describe('PayFiAgent — middleware system', () => {
     // Verify the tool was called with modified payload
     const mockInstance = vi.mocked(StellarPaymentTool).mock.results[0]?.value;
     if (mockInstance) {
-      expect(mockInstance.execute).toHaveBeenCalledWith(expect.objectContaining({ amount: '50' }));
+      expect(mockInstance.execute).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: '50' }),
+        expect.any(String) // correlationId, passed through as the idempotency key
+      );
     }
   });
 
