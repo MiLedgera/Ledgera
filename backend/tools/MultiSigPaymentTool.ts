@@ -84,7 +84,7 @@ export class MultiSigPaymentTool {
     }
 
     if (input.assetCode !== 'XLM' && !input.assetIssuer) {
-      throw new Error(`Asset issuer is required for non-native asset ${input.assetCode}`);
+      throw new ValidationError(`Asset issuer is required for non-native asset ${input.assetCode}`);
     }
 
     const asset =

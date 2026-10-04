@@ -45,6 +45,27 @@ function applySchema(db: Database.Database): void {
       CREATE INDEX IF NOT EXISTS idx_spending_records_timestamp
         ON spending_records (timestamp)
     `);
+  // Idempotency ledger for on-chain submissions (#484). Keyed by a
+  // caller-supplied idempotency key (e.g. AgentTask.correlationId) so a retry
+  // that reuses the same key can detect "this was already submitted" instead
+  // of blindly building and broadcasting a second, distinct transaction.
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS tx_submissions (
+        idempotency_key TEXT    PRIMARY KEY,
+        source_account  TEXT    NOT NULL,
+        tx_hash         TEXT,
+        envelope_xdr    TEXT,
+        status          TEXT    NOT NULL CHECK (status IN ('pending', 'success', 'failed')),
+        result_json     TEXT,
+        error           TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      )
+    `);
+  db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_tx_submissions_source_account
+        ON tx_submissions (source_account)
+    `);
   // Idempotent migration for databases created before correlationId existed.
   const cols = db.prepare(`PRAGMA table_info(agent_results)`).all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === 'correlationId')) {
@@ -276,4 +297,158 @@ export function checkAndRecordSpending(
   });
 
   run.immediate();
+}
+
+// ─── Transaction submission idempotency ledger (#484) ────────────────────────
+
+export type TxSubmissionStatus = 'pending' | 'success' | 'failed';
+
+export interface TxSubmissionRecord {
+  idempotencyKey: string;
+  sourceAccount: string;
+  txHash: string | null;
+  envelopeXdr: string | null;
+  status: TxSubmissionStatus;
+  resultJson: string | null;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface TxSubmissionRow {
+  idempotency_key: string;
+  source_account: string;
+  tx_hash: string | null;
+  envelope_xdr: string | null;
+  status: TxSubmissionStatus;
+  result_json: string | null;
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+function rowToTxSubmission(row: TxSubmissionRow): TxSubmissionRecord {
+  return {
+    idempotencyKey: row.idempotency_key,
+    sourceAccount: row.source_account,
+    txHash: row.tx_hash,
+    envelopeXdr: row.envelope_xdr,
+    status: row.status,
+    resultJson: row.result_json,
+    error: row.error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Look up a submission by idempotency key, or `undefined` if none exists. */
+export function getTxSubmission(idempotencyKey: string): TxSubmissionRecord | undefined {
+  const row = getDb()
+    .prepare(`SELECT * FROM tx_submissions WHERE idempotency_key = ?`)
+    .get(idempotencyKey) as TxSubmissionRow | undefined;
+  return row ? rowToTxSubmission(row) : undefined;
+}
+
+/**
+ * Atomically fetch-or-create the submission row for `idempotencyKey`.
+ *
+ * Wrapped in an immediate transaction so two concurrent callers racing on the
+ * *same* key — two processes sharing this database, or two in-process calls —
+ * cannot both observe "no row yet" and proceed to build and broadcast two
+ * distinct transactions for what is supposed to be one logical operation.
+ * Exactly one of them inserts the `pending` row and gets `isNew: true`; the
+ * other sees the row the first one just created.
+ */
+export function beginTxSubmission(
+  idempotencyKey: string,
+  sourceAccount: string,
+  now: number
+): { record: TxSubmissionRecord; isNew: boolean } {
+  const db = getDb();
+  const run = db.transaction(() => {
+    const existing = db
+      .prepare(`SELECT * FROM tx_submissions WHERE idempotency_key = ?`)
+      .get(idempotencyKey) as TxSubmissionRow | undefined;
+    if (existing) {
+      return { record: rowToTxSubmission(existing), isNew: false };
+    }
+    db.prepare(
+      `INSERT INTO tx_submissions (idempotency_key, source_account, status, created_at, updated_at)
+       VALUES (@idempotencyKey, @sourceAccount, 'pending', @now, @now)`
+    ).run({ idempotencyKey, sourceAccount, now });
+    return {
+      record: {
+        idempotencyKey,
+        sourceAccount,
+        txHash: null,
+        envelopeXdr: null,
+        status: 'pending' as const,
+        resultJson: null,
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      isNew: true,
+    };
+  });
+  return run.immediate();
+}
+
+/**
+ * Record the hash and signed envelope of a submission attempt *before* it is
+ * broadcast — the crux of the idempotency guarantee. If the process crashes,
+ * or the RPC call times out without a response, the next attempt (same key)
+ * can check this exact hash's on-chain status instead of guessing.
+ */
+export function attachTxSubmissionHash(
+  idempotencyKey: string,
+  txHash: string,
+  envelopeXdr: string,
+  now: number
+): void {
+  getDb()
+    .prepare(
+      `UPDATE tx_submissions SET tx_hash = @txHash, envelope_xdr = @envelopeXdr, updated_at = @now
+       WHERE idempotency_key = @idempotencyKey`
+    )
+    .run({ idempotencyKey, txHash, envelopeXdr, now });
+}
+
+/** Mark a submission settled successfully, with its final (possibly status-checked) result. */
+export function completeTxSubmission(
+  idempotencyKey: string,
+  resultJson: string,
+  now: number
+): void {
+  getDb()
+    .prepare(
+      `UPDATE tx_submissions SET status = 'success', result_json = @resultJson, error = NULL, updated_at = @now
+       WHERE idempotency_key = @idempotencyKey`
+    )
+    .run({ idempotencyKey, resultJson, now });
+}
+
+/** Mark a submission definitively failed, so a future call with the same key may rebuild and retry. */
+export function failTxSubmission(idempotencyKey: string, error: string, now: number): void {
+  getDb()
+    .prepare(
+      `UPDATE tx_submissions SET status = 'failed', error = @error, updated_at = @now
+       WHERE idempotency_key = @idempotencyKey`
+    )
+    .run({ idempotencyKey, error, now });
+}
+
+/**
+ * Reset a `failed` submission back to `pending`, clearing its prior hash/
+ * envelope, so the next attempt can rebuild a fresh transaction under the
+ * same idempotency key rather than accumulating unrelated rows.
+ */
+export function resetTxSubmissionToPending(idempotencyKey: string, now: number): void {
+  getDb()
+    .prepare(
+      `UPDATE tx_submissions
+       SET status = 'pending', tx_hash = NULL, envelope_xdr = NULL, result_json = NULL, error = NULL, updated_at = @now
+       WHERE idempotency_key = @idempotencyKey`
+    )
+    .run({ idempotencyKey, now });
 }

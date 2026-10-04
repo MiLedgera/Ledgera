@@ -25,6 +25,7 @@ import {
   sorobanServer,
 } from '../rpc_client';
 import { spendingTracker } from '../spending_tracker';
+import { PolicyError, SimulationError, TransactionFailureError } from '../errors';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -311,11 +312,11 @@ export class SorobanInvokeTool {
           : Number.parseInt(String(feeValue), 10);
 
     if (parsedFee !== undefined && Number.isNaN(parsedFee)) {
-      throw new Error(`Invalid Soroban fee: ${feeValue}`);
+      throw new SimulationError(`Invalid Soroban fee: ${feeValue}`);
     }
 
     if (parsedFee !== undefined && parsedFee > config.MAX_SOROBAN_FEE_STROOPS) {
-      throw new Error(
+      throw new SimulationError(
         `Soroban fee ${preparedTx.fee} exceeds MAX_SOROBAN_FEE_STROOPS ${config.MAX_SOROBAN_FEE_STROOPS}`
       );
     }
@@ -363,7 +364,9 @@ export class SorobanInvokeTool {
     const result = await sorobanServer.sendTransaction(signedTx);
 
     if (result.status === 'ERROR') {
-      throw new Error(`Soroban submit failed: ${result.errorResult?.toXDR('base64')}`);
+      throw new TransactionFailureError(
+        `Soroban submit failed: ${result.errorResult?.toXDR('base64')}`
+      );
     }
 
     // 8. Poll for confirmation
@@ -395,13 +398,13 @@ export class SorobanInvokeTool {
     const limit = parseFloat(config.AGENT_SPENDING_LIMIT);
 
     if (!isNaN(parsed) && !isNaN(limit) && parsed > limit) {
-      throw new Error(
+      throw new PolicyError(
         `Contract invocation transfers ${amountStr} ${config.X402_ASSET_CODE} exceeds ` +
           `AGENT_SPENDING_LIMIT of ${config.AGENT_SPENDING_LIMIT}`
       );
     }
     if (!isNaN(parsed) && config.STELLAR_NETWORK === 'mainnet' && parsed > MAINNET_SPENDING_CAP) {
-      throw new Error(
+      throw new PolicyError(
         `Contract invocation transfers ${amountStr} ${config.X402_ASSET_CODE} exceeds ` +
           `mainnet spending cap of ${MAINNET_SPENDING_CAP}`
       );
@@ -451,8 +454,9 @@ export class SorobanInvokeTool {
         return { txHash: hash };
       }
       if (status.status === 'FAILED') {
-        throw new Error(
-          `Soroban transaction failed on-chain: ${hash} — ${status.resultXdr ?? 'no XDR'}`
+        throw new TransactionFailureError(
+          `Soroban transaction failed on-chain: ${hash} — ${status.resultXdr ?? 'no XDR'}`,
+          hash
         );
       }
       logger.debug('Polling for Soroban transaction confirmation', {
@@ -461,6 +465,9 @@ export class SorobanInvokeTool {
         maxAttempts,
       });
     }
-    throw new Error(`Soroban transaction not confirmed within polling window: ${hash}`);
+    throw new TransactionFailureError(
+      `Soroban transaction not confirmed within polling window: ${hash}`,
+      hash
+    );
   }
 }

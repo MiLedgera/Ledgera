@@ -33,6 +33,26 @@ export const FeeBumpInputSchema = z.object({
 
 export type FeeBumpInput = z.infer<typeof FeeBumpInputSchema>;
 
+/**
+ * Compute the total fee-bump fee for wrapping `innerTx`, per Stellar's
+ * fee-bump rules: the outer fee must cover every inner operation plus the
+ * fee-bump operation itself, at a strictly higher per-operation rate than the
+ * inner transaction paid (so it can't be rejected as `fee_insufficient`).
+ *
+ * Shared by {@link FeeBumpTool.execute} and
+ * `backend/tx_idempotency.ts`'s stuck-transaction resubmission path, so the
+ * two never drift apart on fee math.
+ *
+ * @param baseFeeMultiplier - Must be >= 2 (see {@link FeeBumpInputSchema}).
+ */
+export function computeFeeBumpFee(innerTx: Transaction, baseFeeMultiplier: number): string {
+  const baseFee = parseInt(innerTx.fee, 10);
+  const operationCount = innerTx.operations.length || 1;
+  const feePerOp = Math.ceil(baseFee / operationCount);
+  const newFeePerOp = Math.max(feePerOp * baseFeeMultiplier, parseInt(BASE_FEE, 10));
+  return String((operationCount + 1) * newFeePerOp);
+}
+
 // ─── Tool implementation ──────────────────────────────────────────────────────
 
 export class FeeBumpTool {
@@ -99,14 +119,7 @@ export class FeeBumpTool {
       }
     }
 
-    const baseFee = parseInt(innerTx.fee, 10);
-    const operationCount = innerTx.operations.length || 1;
-    const feePerOp = Math.ceil(baseFee / operationCount);
-    // baseFeeMultiplier must be >= 2 to ensure the fee-bump fee is strictly greater than
-    // the inner transaction's fee, preventing fee_insufficient network rejections.
-    const newFeePerOp = Math.max(feePerOp * input.baseFeeMultiplier, parseInt(BASE_FEE, 10));
-    // Fee-bump fee must be at least (inner ops + 1) * newFeePerOp per Stellar protocol
-    const feeBumpFee = String((operationCount + 1) * newFeePerOp);
+    const feeBumpFee = computeFeeBumpFee(innerTx, input.baseFeeMultiplier);
 
     logger.info('Building fee-bump transaction', {
       feeAccount,

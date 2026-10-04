@@ -15,6 +15,22 @@ export enum ErrorType {
   ContractError = 'CONTRACT_ERROR',
   TransactionFailure = 'TRANSACTION_FAILURE',
   ConfigError = 'CONFIG_ERROR',
+  /**
+   * A business-rule rejection: the request was well-formed and the network
+   * was reachable, but a policy the agent enforces on itself (spending caps,
+   * mainnet safety limits, x402 origin/nonce/rate-limit checks, the
+   * Friendbot-mainnet guard) refused it. Distinguishes "you're not allowed
+   * to do this" from a malformed request (ValidationError) or an upstream
+   * failure (NetworkTimeout/TransactionFailure).
+   */
+  PolicyError = 'POLICY_ERROR',
+  /**
+   * A Soroban simulation failed, or its result was rejected before
+   * broadcast (budget exceeded, fee over MAX_SOROBAN_FEE_STROOPS, no return
+   * value where one was required). Distinct from TransactionFailure: nothing
+   * was ever submitted to the network.
+   */
+  SimulationError = 'SIMULATION_ERROR',
   UnknownError = 'UNKNOWN_ERROR',
 }
 
@@ -105,9 +121,31 @@ export class ConfigError extends StructuredError {
   }
 }
 
-export class SimulationBudgetError extends StructuredError {
+/**
+ * A business-rule rejection — see {@link ErrorType.PolicyError}'s doc comment
+ * for what belongs here vs. ValidationError/TransactionFailureError.
+ */
+export class PolicyError extends StructuredError {
   constructor(message: string, cause?: unknown) {
-    super(message, ErrorType.ContractError, cause);
+    super(message, ErrorType.PolicyError, cause);
+    Object.setPrototypeOf(this, PolicyError.prototype);
+  }
+}
+
+/**
+ * A Soroban simulation failure, or a simulation result rejected before
+ * broadcast. See {@link ErrorType.SimulationError}'s doc comment.
+ */
+export class SimulationError extends StructuredError {
+  constructor(message: string, cause?: unknown) {
+    super(message, ErrorType.SimulationError, cause);
+    Object.setPrototypeOf(this, SimulationError.prototype);
+  }
+}
+
+export class SimulationBudgetError extends SimulationError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
     Object.setPrototypeOf(this, SimulationBudgetError.prototype);
   }
 }

@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 import { config } from '../config';
-import { ConfigError } from '../errors';
+import { PolicyError } from '../errors';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('friendbot-tool');
@@ -32,13 +32,13 @@ export interface FriendBotResult {
 export class FriendBotTool {
   /**
    * Request Friendbot test account funding.
-   * Throws ConfigError if invoked on mainnet.
+   * Throws PolicyError if invoked on mainnet.
    */
   async execute(rawInput: unknown): Promise<FriendBotResult> {
     const input = FriendBotInputSchema.parse(rawInput);
 
     if (config.STELLAR_NETWORK === 'mainnet') {
-      throw new ConfigError('Friendbot funding is not available on mainnet');
+      throw new PolicyError('Friendbot funding is not available on mainnet');
     }
 
     log.info(

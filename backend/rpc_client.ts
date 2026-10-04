@@ -11,6 +11,7 @@ import {
   FeeBumpTransaction,
   xdr,
   StrKey,
+  NotFoundError,
 } from '@stellar/stellar-sdk';
 import { randomUUID } from 'crypto';
 import CircuitBreaker from 'opossum';
@@ -48,7 +49,7 @@ class RpcServiceUnavailableError extends Error {
   }
 }
 
-type HorizonAccount = Awaited<ReturnType<Horizon.Server['loadAccount']>>;
+export type HorizonAccount = Awaited<ReturnType<Horizon.Server['loadAccount']>>;
 type HorizonSubmitResult = Awaited<ReturnType<Horizon.Server['submitTransaction']>>;
 type SorobanSimulationResult = Awaited<ReturnType<rpc.Server['simulateTransaction']>>;
 
@@ -68,10 +69,44 @@ export function invalidateAccountCache(publicKey?: string): void {
   accountCache.delete(publicKey);
 }
 
+// Keyed by source public key. Each entry is the tail of a promise chain, so
+// `withAccountLock` calls for the same key run strictly one at a time.
+const accountLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Serialize async work per source account.
+ *
+ * Stellar sequence numbers are per-account and strictly ordered: two
+ * concurrent callers that each `loadAccount` → build → sign → submit for the
+ * *same* source account can read the same sequence number and race, leaving
+ * one of them rejected with `tx_bad_seq` (or, worse, silently building on top
+ * of state the other caller's submission hasn't been accounted for yet).
+ * Since a single PayFiAgent process signs everything with one keypair, this
+ * lock is what makes `MAX_CONCURRENT_TASKS` > 1 safe for value-moving tasks:
+ * `fn` for a given `publicKey` never overlaps with another `fn` for that same
+ * key, regardless of how many tasks are in flight concurrently.
+ *
+ * A failed `fn` does not poison the chain for the next waiter — each queued
+ * call gets its own independent result.
+ */
+export function withAccountLock<T>(publicKey: string, fn: () => Promise<T>): Promise<T> {
+  const previous = accountLocks.get(publicKey) ?? Promise.resolve();
+  const settle = previous.catch(() => undefined).then(fn);
+  accountLocks.set(
+    publicKey,
+    settle.catch(() => undefined)
+  );
+  return settle;
+}
+
 // opossum's Status class exposes no public API to clear its rolling stats
 // window, so a closed breaker keeps stale failure counts that can trip it
 // back open on the very next request. Zero the buckets directly.
-function resetBreakerStats<TArgs extends unknown[], TResult>(
+// Exported for tests: a real (not mocked) breaker's rolling stats persist
+// across every test that exercises it, since it's a module-level singleton —
+// without a way to force its window back to zero between tests, one test's
+// failures can trip the breaker open for an unrelated, later test.
+export function resetBreakerStats<TArgs extends unknown[], TResult>(
   breaker: CircuitBreaker<TArgs, TResult>
 ): void {
   const status = breaker.status as unknown as Record<string | symbol, unknown>;
@@ -342,6 +377,23 @@ export async function loadAccount(
   return account;
 }
 
+// A single breaker instance for all classic-Horizon submissions, so its
+// rolling failure window reflects Horizon's actual health across every
+// caller rather than resetting per call site. Its `timeout` (10s, from
+// RPC_BREAKER_OPTIONS) is intentionally *shorter* than SUBMIT_TIMEOUT_MS
+// below: the breaker can decide a call is "failed" and record it against the
+// rolling error rate while the real HTTP request is still in flight on
+// Horizon's end. That gap — a client-side timeout racing an in-flight
+// request that may still land — is exactly the scenario idempotent
+// submission (backend/tx_idempotency.ts) exists to make safe: callers must
+// treat a breaker timeout (`err.code === 'ETIMEDOUT'`) as "unknown outcome,
+// check the chain before concluding it failed," never as "safe to resubmit
+// blindly."
+export const submitTransactionBreaker = createRpcBreaker(
+  'horizon-submit',
+  (tx: Transaction | FeeBumpTransaction) => horizonServer.submitTransaction(tx)
+);
+
 export async function submitTransaction(tx: Transaction | FeeBumpTransaction) {
   validateXDR(tx.toEnvelope().toXDR('base64'));
 
@@ -361,13 +413,44 @@ export async function submitTransaction(tx: Transaction | FeeBumpTransaction) {
             reject(new TimeoutError(SUBMIT_TIMEOUT_MS));
           }, SUBMIT_TIMEOUT_MS);
         });
-        return Promise.race([horizonServer.submitTransaction(tx), timeoutPromise]).finally(() =>
+        return Promise.race([submitTransactionBreaker.fire(tx), timeoutPromise]).finally(() =>
           clearTimeout(timeoutId)
         );
       })
     );
   } finally {
     invalidateAccountCache();
+  }
+}
+
+/**
+ * Look up a transaction's on-chain outcome by hash, independent of whatever
+ * error (if any) the original submission attempt raised.
+ *
+ * This is the check that makes idempotent resubmission safe: an ambiguous
+ * failure (timeout, breaker trip mid-flight, dropped connection) means the
+ * client doesn't know whether Horizon applied the transaction — only Horizon
+ * does. `not_found` covers both "genuinely never applied" and "applied so
+ * recently it hasn't propagated to this query yet"; callers that need to
+ * distinguish those should poll rather than treat a single `not_found` as
+ * final.
+ */
+export async function getTransactionStatus(
+  hash: string
+): Promise<{ status: 'success' | 'failed' | 'not_found'; ledger?: number }> {
+  try {
+    const tx = await horizonServer.transactions().transaction(hash).call();
+    // `ledger_attr` is the raw ledger sequence number; `ledger` on this
+    // response shape is a lazy-loading link function (CallFunction<LedgerRecord>),
+    // not the number itself.
+    return tx.successful
+      ? { status: 'success', ledger: tx.ledger_attr }
+      : { status: 'failed', ledger: tx.ledger_attr };
+  } catch (err) {
+    if (err instanceof NotFoundError) {
+      return { status: 'not_found' };
+    }
+    throw err;
   }
 }
 

@@ -15,7 +15,7 @@
 import { Keypair, TransactionBuilder, Operation, Asset, BASE_FEE } from '@stellar/stellar-sdk';
 import { z } from 'zod';
 import { config } from '../config';
-import { ValidationError } from '../errors';
+import { PolicyError, ValidationError } from '../errors';
 import { loadAccount, resolveNetworkPassphrase, submitTransaction } from '../rpc_client';
 import { PaymentInputSchema, SubmitResultSchema } from './StellarPaymentTool';
 import { SOROBAN_TX_TIMEOUT } from './SorobanInvokeTool';
@@ -69,7 +69,7 @@ export class BatchPaymentTool {
     const total = payments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
     const limit = parseFloat(config.AGENT_SPENDING_LIMIT);
     if (total > limit) {
-      throw new Error(
+      throw new PolicyError(
         `Batch total ${total} ${config.X402_ASSET_CODE} exceeds AGENT_SPENDING_LIMIT of ${config.AGENT_SPENDING_LIMIT}`
       );
     }

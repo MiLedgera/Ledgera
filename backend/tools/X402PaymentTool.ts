@@ -12,7 +12,7 @@ import { horizonServer } from '../rpc_client';
 import { StellarPaymentTool } from './StellarPaymentTool';
 import { logger } from '../logger';
 import { INonceStore, SqliteNonceStore, MAX_NONCE_TTL_MS } from '../nonce_store';
-import { TransactionFailureError } from '../errors';
+import { PolicyError, TransactionFailureError, ValidationError } from '../errors';
 
 /**
  * Best-effort recovery of a transaction hash from a submission error.
@@ -124,32 +124,32 @@ export class X402PaymentTool {
     }
 
     if (this.paymentCount >= config.MAX_X402_PAYMENTS_PER_MINUTE) {
-      throw new Error('x402: rate limit exceeded');
+      throw new PolicyError('x402: rate limit exceeded');
     }
     this.paymentCount++;
 
     const challenge = X402ChallengeSchema.parse(rawChallenge);
 
     if (challenge.payTo === this.keypair.publicKey()) {
-      throw new Error("Payment destination cannot be the agent's own address");
+      throw new ValidationError("Payment destination cannot be the agent's own address");
     }
 
     if (config.ALLOWED_X402_ORIGINS) {
       const allowedOrigins = config.ALLOWED_X402_ORIGINS.split(',').map((o) => o.trim());
       const hostname = new URL(challenge.resource).hostname;
       if (!allowedOrigins.includes(hostname)) {
-        throw new Error('x402: untrusted resource origin');
+        throw new PolicyError('x402: untrusted resource origin');
       }
     } else {
       logger.warn('ALLOWED_X402_ORIGINS is not set. All origins accepted.');
     }
 
     if (new Date(challenge.expiresAt) < new Date()) {
-      throw new Error(`x402 challenge expired at ${challenge.expiresAt}`);
+      throw new PolicyError(`x402 challenge expired at ${challenge.expiresAt}`);
     }
 
     if (await this.nonceStore.has(challenge.nonce)) {
-      throw new Error('x402: nonce already used');
+      throw new PolicyError('x402: nonce already used');
     }
 
     let txHash: string;

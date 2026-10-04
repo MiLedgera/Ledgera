@@ -54,7 +54,7 @@ export type PathPaymentInput = z.infer<typeof PathPaymentInputSchema>;
 function toAsset(a: { code: string; issuer?: string | undefined }): Asset {
   if (a.code === 'XLM') return Asset.native();
   if (!a.issuer) {
-    throw new Error(`Asset issuer is required for non-native asset ${a.code}`);
+    throw new ValidationError(`Asset issuer is required for non-native asset ${a.code}`);
   }
   return new Asset(a.code, a.issuer);
 }
@@ -78,7 +78,7 @@ export class PathPaymentTool {
     const input = PathPaymentInputSchema.parse(rawInput);
 
     if (!input.allowSelfPayment && input.destination === this.keypair.publicKey()) {
-      throw new Error("Payment destination cannot be the agent's own address");
+      throw new ValidationError("Payment destination cannot be the agent's own address");
     }
 
     const sendAsset = toAsset(input.sendAsset);

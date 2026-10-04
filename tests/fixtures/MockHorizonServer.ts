@@ -95,6 +95,10 @@ export interface MockHorizonServer {
   loadAccount: MockedFn;
   /** Mock of `rpc_client.submitTransaction`. */
   submitTransaction: MockedFn;
+  /** Mock of `rpc_client.getTransactionStatus`. Defaults to `{ status: 'not_found' }`. */
+  getTransactionStatus: MockedFn;
+  /** Mock of `rpc_client.withAccountLock`. Defaults to a pass-through (no real serialization). */
+  withAccountLock: MockedFn;
   /** Nested Horizon server mock exposing `payments` / `orderbook`. */
   horizonServer: {
     /** `horizonServer.payments()` returns `{ forAccount }`. */
@@ -130,6 +134,11 @@ export interface MockHorizonServer {
   setPaymentRecords(records: unknown[]): MockHorizonServer;
   /** Configure the response resolved by `orderbook(...).call()`. */
   setOrderbookResponse(response: { bids: unknown[]; asks: unknown[] }): MockHorizonServer;
+  /** Configure the default `getTransactionStatus` resolution (default: `{ status: 'not_found' }`). */
+  setTransactionStatus(result: {
+    status: 'success' | 'failed' | 'not_found';
+    ledger?: number;
+  }): MockHorizonServer;
 
   /** Re-seed every mock to its configured default and clear call history. */
   reset(): void;
@@ -164,6 +173,11 @@ export function createMockHorizonServer(
   const submitTransaction = vi.fn();
   const simulateSorobanTx = vi.fn();
   const prepareSorobanTx = vi.fn();
+  const getTransactionStatus = vi.fn();
+  // Pass-through by default: callers (e.g. submitIdempotent) run fn()
+  // immediately rather than being serialized, which is fine for tests that
+  // don't exercise real cross-call concurrency at this layer.
+  const withAccountLock = vi.fn((_key: string, fn: () => unknown) => fn());
 
   // Chainable payment-history query: order()/limit()/cursor() return the query
   // itself, call() resolves to the configured records.
@@ -203,11 +217,14 @@ export function createMockHorizonServer(
     submitError: submitError,
     paymentRecords: paymentRecords !== undefined ? paymentRecords : [],
     orderbookResponse: orderbookResponse !== undefined ? orderbookResponse : { bids: [], asks: [] },
+    transactionStatus: { status: 'not_found' as const },
   };
 
   const server: MockHorizonServer = {
     loadAccount,
     submitTransaction,
+    getTransactionStatus,
+    withAccountLock,
     horizonServer,
     sorobanServer: {},
     simulateSorobanTx,
@@ -244,6 +261,13 @@ export function createMockHorizonServer(
       orderbookCall.mockResolvedValue(response);
       return server;
     },
+    setTransactionStatus(result: {
+      status: 'success' | 'failed' | 'not_found';
+      ledger?: number;
+    }): MockHorizonServer {
+      getTransactionStatus.mockResolvedValue(result);
+      return server;
+    },
     reset(): void {
       vi.clearAllMocks();
       paymentsQuery.order.mockReturnValue(paymentsQuery);
@@ -253,6 +277,8 @@ export function createMockHorizonServer(
       forAccount.mockReturnValue(paymentsQuery);
       payments.mockReturnValue({ forAccount });
       orderbook.mockReturnValue(orderbookBuilder);
+      withAccountLock.mockImplementation((_key: string, fn: () => unknown) => fn());
+      getTransactionStatus.mockResolvedValue(defaults.transactionStatus);
 
       if (defaults.accountError !== undefined) {
         loadAccount.mockRejectedValue(defaults.accountError);
