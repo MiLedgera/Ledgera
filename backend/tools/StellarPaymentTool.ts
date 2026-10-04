@@ -18,6 +18,7 @@ import {
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { config } from '../config';
+import { ValidationError } from '../errors';
 import { logger } from '../logger';
 import { resolveNetworkPassphrase, type HorizonAccount } from '../rpc_client';
 import { submitIdempotent } from '../tx_idempotency';
@@ -142,12 +143,12 @@ export class StellarPaymentTool {
 
     // Self-payment guard
     if (input.destination === this.keypair.publicKey()) {
-      throw new Error("Payment destination cannot be the agent's own address");
+      throw new ValidationError("Payment destination cannot be the agent's own address");
     }
 
     // 2. Resolve asset
     if (input.assetCode !== 'XLM' && !input.assetIssuer) {
-      throw new Error(`Asset issuer is required for non-native asset ${input.assetCode}`);
+      throw new ValidationError(`Asset issuer is required for non-native asset ${input.assetCode}`);
     }
     const asset =
       input.assetCode === 'XLM' ? Asset.native() : new Asset(input.assetCode, input.assetIssuer);

@@ -29,7 +29,7 @@ import {
 import { config } from '../config';
 import { loadAccount, prepareSorobanTxWithEvents, resolveNetworkPassphrase } from '../rpc_client';
 import { sorobanServer } from '../rpc_client';
-import { ValidationError } from '../errors';
+import { SimulationError, TransactionFailureError, ValidationError } from '../errors';
 import { createLogger } from '../utils/logger';
 import { SOROBAN_TX_TIMEOUT } from './SorobanInvokeTool';
 
@@ -148,7 +148,9 @@ export class SorobanDeployTool {
 
     const result = await sorobanServer.sendTransaction(preparedTx);
     if (result.status === 'ERROR') {
-      throw new Error(`Soroban submit failed: ${result.errorResult?.toXDR('base64')}`);
+      throw new TransactionFailureError(
+        `Soroban submit failed: ${result.errorResult?.toXDR('base64')}`
+      );
     }
 
     await this.pollForConfirmation(result.hash);
@@ -219,7 +221,9 @@ export class SorobanDeployTool {
 
     const result = await sorobanServer.sendTransaction(preparedTx);
     if (result.status === 'ERROR') {
-      throw new Error(`Soroban submit failed: ${result.errorResult?.toXDR('base64')}`);
+      throw new TransactionFailureError(
+        `Soroban submit failed: ${result.errorResult?.toXDR('base64')}`
+      );
     }
 
     await this.pollForConfirmation(result.hash);
@@ -280,10 +284,10 @@ export class SorobanDeployTool {
         : Number.parseInt(String(feeValue), 10);
 
     if (parsedFee !== undefined && Number.isNaN(parsedFee)) {
-      throw new Error(`Invalid Soroban fee: ${feeValue}`);
+      throw new SimulationError(`Invalid Soroban fee: ${feeValue}`);
     }
     if (parsedFee !== undefined && parsedFee > config.MAX_SOROBAN_FEE_STROOPS) {
-      throw new Error(
+      throw new SimulationError(
         `Soroban fee ${feeValue} exceeds MAX_SOROBAN_FEE_STROOPS ${config.MAX_SOROBAN_FEE_STROOPS}`
       );
     }
@@ -304,12 +308,16 @@ export class SorobanDeployTool {
         return { txHash: hash };
       }
       if (status.status === 'FAILED') {
-        throw new Error(
-          `Soroban transaction failed on-chain: ${hash} — ${status.resultXdr ?? 'no XDR'}`
+        throw new TransactionFailureError(
+          `Soroban transaction failed on-chain: ${hash} — ${status.resultXdr ?? 'no XDR'}`,
+          hash
         );
       }
       log.debug({ txHash: hash, attempt: i + 1, maxAttempts }, 'Polling for confirmation');
     }
-    throw new Error(`Soroban transaction not confirmed within polling window: ${hash}`);
+    throw new TransactionFailureError(
+      `Soroban transaction not confirmed within polling window: ${hash}`,
+      hash
+    );
   }
 }

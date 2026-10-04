@@ -13,7 +13,7 @@
 // Updated imports
 import { EventEmitter } from 'events';
 import { rpc } from '@stellar/stellar-sdk';
-import { config, MAINNET_SPENDING_CAP } from './config';
+import { config } from './config';
 import { logger } from './logger';
 import { saveResult } from './persistence';
 import { StructuredError, ErrorType, getErrorType, sanitizeCause } from './errors';
@@ -51,120 +51,19 @@ import * as rpcClient from './rpc_client';
 import { createLogger, generateCorrelationId } from './utils/logger';
 import { spendingTracker } from './spending_tracker';
 import { dispatchWebhook } from './webhook';
+import { ToolRegistry, type ToolJSONSchema } from './tool_registry';
+import { buildToolDefinitions } from './tool_definitions';
 
 // Re-exported so existing importers (`server.ts`, tests) keep working after the
 // singleton moved to spending_tracker.ts.
 export { spendingTracker };
 
 // ─── Spending limit guard ─────────────────────────────────────────────────────
-
-/**
- * Resolve a raw amount + asset into the numeric value the spending caps are
- * actually denominated in.
- *
- * AGENT_SPENDING_LIMIT, AGENT_HOURLY_SPENDING_LIMIT, AGENT_DAILY_SPENDING_LIMIT,
- * and MAINNET_SPENDING_CAP apply to the "reference asset": native XLM, or the
- * configured X402_ASSET_CODE/X402_ASSET_ISSUER pair — both treated as par-value
- * units (see MAINNET_SPENDING_CAP's doc comment in config.ts). A payment in any
- * other asset cannot be compared against these caps at face value, so it is
- * either rejected outright or converted to the reference asset first, per
- * `config.SPENDING_LIMIT_UNKNOWN_ASSET_POLICY`.
- *
- * @throws {Error} If the asset is neither the reference asset nor convertible
- *   under the current policy/rate table.
- */
-function resolveReferenceAmount(
-  parsed: number,
-  rawAmount: string,
-  assetCode: unknown,
-  assetIssuer: unknown
-): { amount: number; assetLabel: string } {
-  const code = typeof assetCode === 'string' ? assetCode : undefined;
-  const issuer = typeof assetIssuer === 'string' ? assetIssuer : undefined;
-
-  const isReferenceAsset =
-    code === undefined ||
-    code === 'XLM' ||
-    (code === config.X402_ASSET_CODE &&
-      (issuer === undefined || issuer === config.X402_ASSET_ISSUER));
-
-  if (isReferenceAsset || code === undefined) {
-    // `code === undefined` is redundant with `isReferenceAsset` (already true
-    // in that case) but narrows `code` from `string | undefined` to `string`
-    // for TypeScript in the non-reference branch below.
-    return { amount: parsed, assetLabel: code ?? config.X402_ASSET_CODE };
-  }
-
-  if (config.SPENDING_LIMIT_UNKNOWN_ASSET_POLICY === 'reject') {
-    throw new Error(
-      `Payment asset ${code} is not XLM or the configured reference asset ` +
-        `(${config.X402_ASSET_CODE}) — the spending-limit guard cannot evaluate ` +
-        `it without a conversion rate. Set SPENDING_LIMIT_UNKNOWN_ASSET_POLICY=convert ` +
-        `and configure ASSET_CONVERSION_RATES to allow payments in ${code}.`
-    );
-  }
-
-  const rate = config.ASSET_CONVERSION_RATES?.[code];
-  if (rate === undefined) {
-    throw new Error(
-      `No conversion rate configured for asset ${code} in ASSET_CONVERSION_RATES — ` +
-        `cannot evaluate the spending limit for amount ${rawAmount} ${code}`
-    );
-  }
-
-  return {
-    amount: parsed * rate,
-    assetLabel: `${config.X402_ASSET_CODE} (converted from ${rawAmount} ${code} at rate ${rate})`,
-  };
-}
-
-/**
- * Check that a payment amount does not exceed the configured spending limit,
- * the mainnet safety cap, or the rolling hourly/daily cumulative caps.
- *
- * `assetCode`/`assetIssuer` identify what the amount is denominated in; pass
- * them whenever the task payload carries them so a payment in an asset other
- * than the reference asset (see {@link resolveReferenceAmount}) is rejected —
- * or converted — instead of being compared against the caps at face value.
- * Omit them (or pass `undefined`) when the caller already knows the amount is
- * native XLM (e.g. `sponsored_account`'s startingBalance).
- */
-function assertWithinSpendingLimit(
-  amount: unknown,
-  assetCode?: unknown,
-  assetIssuer?: unknown
-): void {
-  if (typeof amount !== 'string') return; // let the tool's own schema catch this
-
-  const rawParsed = parseFloat(amount);
-  if (isNaN(rawParsed)) return; // let the tool's own schema catch this
-
-  const { amount: parsed, assetLabel } = resolveReferenceAmount(
-    rawParsed,
-    amount,
-    assetCode,
-    assetIssuer
-  );
-  const limit = parseFloat(config.AGENT_SPENDING_LIMIT);
-
-  if (parsed > limit) {
-    throw new Error(
-      `Payment amount ${amount} ${assetLabel} exceeds ` +
-        `AGENT_SPENDING_LIMIT of ${config.AGENT_SPENDING_LIMIT}`
-    );
-  }
-  if (config.STELLAR_NETWORK === 'mainnet' && parsed > MAINNET_SPENDING_CAP) {
-    throw new Error(
-      `Payment amount ${amount} ${assetLabel} exceeds ` +
-        `mainnet spending cap of ${MAINNET_SPENDING_CAP}`
-    );
-  }
-
-  // Record cumulative spending (after individual checks pass), in
-  // reference-asset units so amounts from different assets accumulate
-  // honestly against the same rolling window.
-  spendingTracker.record(String(parsed));
-}
+//
+// Relocated to backend/tool_definitions.ts as each value-moving tool's
+// `policyCheck` — the registry (backend/tool_registry.ts) runs it before
+// `execute`, replacing what used to be hand-threaded into this file's
+// dispatch switch. See that module for the (verbatim) logic.
 
 const log = createLogger('orchestrator');
 
@@ -358,6 +257,14 @@ export class PayFiAgent extends EventEmitter {
   private stellarIdentityTool: StellarIdentityTool;
   private balanceStreamTool: BalanceStreamTool;
 
+  /**
+   * Every dispatchable task type's `ToolDefinition`, built from this
+   * instance's own tool objects (see `buildToolDefinitions`'s doc comment
+   * for why it's per-instance rather than a shared module-level registry).
+   * `executeTask` dispatches through this instead of a hand-written switch.
+   */
+  private readonly toolRegistry: ToolRegistry;
+
   private activeTasks = 0;
   private isDraining = false;
   private readonly taskQueue: Array<{
@@ -409,6 +316,38 @@ export class PayFiAgent extends EventEmitter {
     this.stellarIdentityTool = new StellarIdentityTool(config.agentKeypair().secret());
     this.balanceStreamTool = new BalanceStreamTool();
 
+    this.toolRegistry = new ToolRegistry();
+    for (const definition of buildToolDefinitions({
+      paymentTool: this.paymentTool,
+      sorobanTool: this.sorobanTool,
+      sorobanQueryTool: this.sorobanQueryTool,
+      x402Tool: this.x402Tool,
+      accountInfoTool: this.accountInfoTool,
+      trustlineTool: this.trustlineTool,
+      multiSigTool: this.multiSigTool,
+      batchPaymentTool: this.batchPaymentTool,
+      balanceCheckTool: this.balanceCheckTool,
+      pathPaymentTool: this.pathPaymentTool,
+      feeBumpTool: this.feeBumpTool,
+      dexOfferTool: this.dexOfferTool,
+      liquidityPoolTool: this.liquidityPoolTool,
+      stellarTomlTool: this.stellarTomlTool,
+      dataEntryTool: this.dataEntryTool,
+      sequenceNumberTool: this.sequenceNumberTool,
+      sponsoredAccountTool: this.sponsoredAccountTool,
+      anchorQuoteTool: this.anchorQuoteTool,
+      inflationTool: this.inflationTool,
+      sorobanDeployTool: this.sorobanDeployTool,
+      swapTool: this.swapTool,
+      accountHistoryTool: this.accountHistoryTool,
+      claimableBalanceTool: this.claimableBalanceTool,
+      setOptionsTool: this.setOptionsTool,
+      sorobanEventIndexerTool: this.sorobanEventIndexerTool,
+      stellarIdentityTool: this.stellarIdentityTool,
+    })) {
+      this.toolRegistry.register(definition);
+    }
+
     // ── Register event listeners — every registration is mirrored in destroy() ──
     const onError = (err: Error) => {
       const safe = err.message.replace(/S[A-Z2-7]{55}/g, '[REDACTED]');
@@ -438,6 +377,16 @@ export class PayFiAgent extends EventEmitter {
       spendingLimit: config.AGENT_SPENDING_LIMIT,
       assetCode: config.X402_ASSET_CODE,
     });
+  }
+
+  /**
+   * JSON Schema function-calling definitions (`{name, description, parameters}`,
+   * generated from each tool's Zod input schema) for every registered task
+   * type — plugs this agent's whole toolset into any LLM function-calling
+   * API (OpenAI, Anthropic tool use, or anything following the same shape).
+   */
+  getToolSchemas(): ToolJSONSchema[] {
+    return this.toolRegistry.toJSONSchemaAll();
   }
 
   /**
@@ -717,216 +666,13 @@ export class PayFiAgent extends EventEmitter {
     // ── Compose middleware chain ────────────────────────────────────────────────
     const executeTask = async (): Promise<AgentResult> => {
       try {
-        let data: unknown;
-
-        switch (task.type) {
-          case 'stellar_payment': {
-            const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
-            // correlationId doubles as the idempotency key: a caller that
-            // retries this exact task by reusing the same correlationId gets
-            // deduplicated against a prior attempt that actually landed (see
-            // backend/tx_idempotency.ts). A caller-generated-fresh-each-time
-            // correlationId (the default when none is supplied) does not get
-            // this protection — see StellarPaymentTool.execute's doc comment.
-            const paymentResult = await this.paymentTool.execute(task.payload, correlationId);
-            data = {
-              ...paymentResult,
-              network: config.STELLAR_NETWORK,
-            };
-            break;
-          }
-
-          case 'soroban_invoke': {
-            data = await this.sorobanTool.execute(task.payload);
-            break;
-          }
-
-          case 'soroban_query':
-            data = await this.sorobanQueryTool.query(task.payload);
-            break;
-
-          case 'x402_respond': {
-            const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
-            data = await this.x402Tool.respond(task.payload);
-            break;
-          }
-
-          case 'account_info':
-            data = await this.accountInfoTool.fetch();
-            break;
-
-          case 'change_trust':
-            data = await this.trustlineTool.execute(task.payload);
-            break;
-
-          case 'multisig_payment': {
-            const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
-            data = await this.multiSigTool.execute(task.payload);
-            break;
-          }
-
-          case 'batch_payment': {
-            const p = task.payload as Record<string, unknown>;
-            const payments = Array.isArray(p?.payments) ? (p.payments as unknown[]) : [];
-            // Batch is one atomic transaction — enforce the cap and mainnet ceiling
-            // against the aggregate, and record the aggregate against the rolling
-            // window so batching can't be used to evade it (see audit finding S-1).
-            // Payments can mix assets, so the aggregate is computed per asset —
-            // summing raw amounts across different assets as one number would
-            // silently misjudge the limit for either asset.
-            const totalsByAsset = new Map<
-              string,
-              { total: number; assetCode?: unknown; assetIssuer?: unknown }
-            >();
-            for (const payment of payments) {
-              const pp = payment as Record<string, unknown>;
-              const amt = parseFloat(String(pp?.amount));
-              if (isNaN(amt)) continue;
-              const assetCode = pp?.assetCode;
-              const assetIssuer = pp?.assetIssuer;
-              const key = `${String(assetCode ?? 'XLM')}:${String(assetIssuer ?? '')}`;
-              const existing = totalsByAsset.get(key);
-              if (existing) {
-                existing.total += amt;
-              } else {
-                totalsByAsset.set(key, { total: amt, assetCode, assetIssuer });
-              }
-            }
-            for (const { total, assetCode, assetIssuer } of totalsByAsset.values()) {
-              assertWithinSpendingLimit(
-                total > 0 ? String(total) : undefined,
-                assetCode,
-                assetIssuer
-              );
-            }
-            data = await this.batchPaymentTool.execute(task.payload);
-            break;
-          }
-
-          case 'balance_check': {
-            const balanceCheckTool = this.balanceCheckTool as {
-              execute?: (payload: unknown) => Promise<unknown>;
-              getBalance?: (payload: unknown) => Promise<unknown>;
-            };
-            if (typeof balanceCheckTool.execute === 'function') {
-              data = await balanceCheckTool.execute(task.payload);
-            } else if (typeof balanceCheckTool.getBalance === 'function') {
-              data = await balanceCheckTool.getBalance(task.payload);
-            } else {
-              throw new Error('Balance check tool does not implement execute() or getBalance().');
-            }
-            break;
-          }
-
-          case 'path_payment': {
-            const p = task.payload as Record<string, unknown>;
-            const sendAsset = p?.sendAsset as Record<string, unknown> | undefined;
-            assertWithinSpendingLimit(p?.sendAmount, sendAsset?.code, sendAsset?.issuer);
-            data = await this.pathPaymentTool.execute(task.payload);
-            break;
-          }
-
-          case 'fee_bump':
-            data = await this.feeBumpTool.execute(task.payload);
-            break;
-
-          case 'dex_offer': {
-            const p = task.payload as Record<string, unknown>;
-            // A "delete" always submits amount "0" on-chain regardless of the
-            // input amount (see DexOfferTool) and reduces exposure rather than
-            // creating it, so only create/update are checked against the cap.
-            if (p?.action !== 'delete') {
-              const selling = p?.selling as Record<string, unknown> | undefined;
-              assertWithinSpendingLimit(p?.amount, selling?.code, selling?.issuer);
-            }
-            data = await this.dexOfferTool.execute(task.payload);
-            break;
-          }
-
-          case 'swap': {
-            const p = task.payload as Record<string, unknown>;
-            const sellAsset = p?.sellAsset as Record<string, unknown> | undefined;
-            assertWithinSpendingLimit(p?.sellAmount, sellAsset?.code, sellAsset?.issuer);
-            data = await this.swapTool.execute(task.payload);
-            break;
-          }
-
-          case 'account_history':
-            data = await this.accountHistoryTool.fetch(task.payload);
-            break;
-
-          case 'soroban_deploy':
-            data = await this.sorobanDeployTool.execute(task.payload);
-            break;
-
-          case 'liquidity_pool': {
-            const p = task.payload as Record<string, unknown>;
-            // Only "deposit" commits new funds into the pool; "withdraw" returns
-            // funds to the agent and "info" is read-only, so neither is checked.
-            if (p?.action === 'deposit') {
-              const assetA = p?.assetA as Record<string, unknown> | undefined;
-              const assetB = p?.assetB as Record<string, unknown> | undefined;
-              assertWithinSpendingLimit(p?.maxAmountA, assetA?.code, assetA?.issuer);
-              assertWithinSpendingLimit(p?.maxAmountB, assetB?.code, assetB?.issuer);
-            }
-            data = await this.liquidityPoolTool.execute(task.payload);
-            break;
-          }
-
-          case 'stellar_toml':
-            data = await this.stellarTomlTool.fetchToml(task.payload);
-            break;
-
-          case 'data_entry':
-            data = await this.dataEntryTool.execute(task.payload);
-            break;
-
-          case 'sequence_number':
-            data = await this.sequenceNumberTool.execute(task.payload);
-            break;
-
-          case 'sponsored_account': {
-            const p = task.payload as Record<string, unknown>;
-            assertWithinSpendingLimit(p?.startingBalance);
-            data = await this.sponsoredAccountTool.execute(task.payload);
-            break;
-          }
-
-          case 'anchor_quote':
-            data = await this.anchorQuoteTool.execute(task.payload);
-            break;
-
-          case 'inflation':
-            data = await this.inflationTool.execute(task.payload);
-            break;
-
-          case 'claimable_balance': {
-            const p = task.payload as Record<string, unknown>;
-            if (p?.action === 'create') {
-              assertWithinSpendingLimit(p?.amount, p?.assetCode, p?.assetIssuer);
-            }
-            data = await this.claimableBalanceTool.execute(task.payload);
-            break;
-          }
-
-          case 'set_options':
-            data = await this.setOptionsTool.execute(task.payload);
-            break;
-
-          case 'soroban_events':
-            data = await this.sorobanEventIndexerTool.query(task.payload);
-            break;
-
-          case 'web_auth':
-            data = await this.stellarIdentityTool.execute(task.payload);
-            break;
-
-          default:
-            throw new Error(`Unknown task type: ${(task as AgentTask).type}`);
-        }
+        // Dispatch through the registry: policy check (if the tool declares
+        // one — spending-limit assertions, etc.) then execute. See
+        // backend/tool_definitions.ts for each task type's definition; the
+        // per-type logic that used to live in this switch (including
+        // stellar_payment's correlationId-as-idempotency-key threading) now
+        // lives there, verbatim.
+        const data = await this.toolRegistry.dispatch(task.type, task.payload, { correlationId });
 
         taskLog.info({ taskType: task.type }, 'Task completed');
         const result: AgentResult = { success: true, taskType: task.type, data, correlationId };
